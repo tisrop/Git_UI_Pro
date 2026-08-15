@@ -52,7 +52,7 @@ Windows 正式版启动后会静默检查 Gitee 国内更新源，Gitee 不可�
 
 首次启用时需要先发布并手动安装一个包含双更新源逻辑的基线版本。更早、尚未集成该更新器的旧版本不会自动切换到国内源；从基线版本开始，后续 Gitee 或 GitHub Release 均可完成应用内升级。
 
-GitHub Release 必须同时上传同一版本的 NSIS `.exe`、对应 `.exe.blockmap`、Portable `.exe` 和 `latest.yml`。Gitee Release 除这四项外还会上传 `update-manifest.json`，清单分别记录安装版与 Portable 的文件名、大小和 SHA-256。镜像缺项或摘要不匹配时，客户端不会下载可疑资产，而会尝试 GitHub 备用源。
+GitHub Release 必须同时上传同一版本的 NSIS `.exe`、对应 `.exe.blockmap`、Portable `.exe` 和 `latest.yml`。Gitee Release 除这四项外还会上传 `update-manifest.json`，清单分别记录安装版与 Portable 的文件名、大小和 SHA-256。镜像缺项或摘要不匹配时，客户端不会下载可疑资产，而会尝试 GitHub 备用源。为避免 Gitee 仓库累计 1GB 的附件配额阻断发布，本地镜像同步只保留最近 3 个正式版本的受管下载附件；更早版本的 Release 页面、标签和说明继续保留，完整历史附件仍可从 GitHub 获取。
 
 安装版继续通过 electron-updater 和 blockmap 完成差分下载，差分条件不满足时回退到完整安装包。Portable 使用独立下载与替换流程：更新包流式写入当前 Portable 所在磁盘，严格校验大小和 SHA-256，用户确认后由独立 PowerShell 辅助进程等待应用及外层启动器退出，再替换 Portable 可执行文件并启动新版本。新版本窗口成功加载并写入健康标记后才删除上一版本；若 90 秒内未通过健康检查，则自动恢复旧文件并重新启动。
 
