@@ -1686,6 +1686,19 @@ export function App() {
     const toastId = notifyLoading(`正在${label}...`);
 
     const result = action === "pull" ? await apiClient.pull(project, uiPreferences.pullStrategy) : await apiClient[action](project);
+    const needsFirstPublish = action === "push"
+      && !result.ok
+      && !project.status?.upstream
+      && (
+        result.stderr.includes("no default push remote")
+        || result.messageZh?.includes("无法确定默认远程仓库")
+      );
+    if (needsFirstPublish) {
+      notifyInfo("首次推送只需填写远程仓库地址", "软件会自动配置 origin，并关联当前分支。", toastId);
+      setRepositoryCenterInitialTab("remotes");
+      setRepositoryCenterOpen(true);
+      return;
+    }
     if (!notifyGitResult(result, `${label}完成`, `${label}失败，请查看原始 Git 输出。`, toastId)) {
       return;
     }

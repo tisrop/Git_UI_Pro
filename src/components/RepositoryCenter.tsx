@@ -371,6 +371,7 @@ export interface RepositoryCenterActions {
   onLoadRebasePlan: (target: string) => Promise<RepositoryRebasePlanItem[]>;
   onStartRebase: (input: { target: string; interactive: boolean; onto?: string; plan?: RepositoryRebasePlanItem[] }) => void | Promise<void>;
   onForcePushWithLease: (input: { forceWithLease: true }) => void | Promise<void>;
+  onPublishCurrentBranch: (input: { remoteId?: string; remoteUrl?: string }) => RepositoryActionFeedback;
   onSaveRemote: (input: RepositoryRemoteInput) => void | Promise<void>;
   onDeleteRemote: (remoteId: string) => void | Promise<void>;
   onFetchRemote: (remoteId: string) => void | Promise<void>;
@@ -1267,6 +1268,8 @@ function BranchRow({ branch, branches, actions, pendingAction, runAction }: { br
 
 function RemotesWorkspace({ data, actions, pendingAction, runAction, reload }: WorkspaceProps) {
   const [editing, setEditing] = useState<RepositoryRemoteInput>({ name: "", fetchUrl: "", pushUrl: "" });
+  const [publishUrl, setPublishUrl] = useState("");
+  const [publishRemoteId, setPublishRemoteId] = useState("");
   const [hostingProvider, setHostingProvider] = useState<GitHostingProvider>("github");
   const [hostingRemoteId, setHostingRemoteId] = useState("");
   const [hostingToken, setHostingToken] = useState("");
@@ -1276,6 +1279,16 @@ function RemotesWorkspace({ data, actions, pendingAction, runAction, reload }: W
   const [changeSource, setChangeSource] = useState("");
   const [changeTarget, setChangeTarget] = useState("");
   const targetRemoteRef = useRef<string | null>(null);
+  const currentBranch = data.branches.status === "ready"
+    ? data.branches.data.find((branch) => branch.kind === "local" && branch.current)
+    : undefined;
+
+  useEffect(() => {
+    if (data.remotes.status !== "ready") return;
+    if (!data.remotes.data.some((remote) => remote.id === publishRemoteId)) {
+      setPublishRemoteId(data.remotes.data.find((remote) => remote.isDefaultPush)?.id ?? data.remotes.data[0]?.id ?? "");
+    }
+  }, [data.remotes, publishRemoteId]);
 
   useEffect(() => {
     if (data.remotes.status !== "ready") return;
@@ -1324,33 +1337,76 @@ function RemotesWorkspace({ data, actions, pendingAction, runAction, reload }: W
   }
   return <div className="repository-center-workspace">
     <section className="repository-center-section">
-      <SectionHeader icon={<Cloud size={17} />} title="远程仓库" description="集中管理 fetch、push 地址和默认远程" />
-      <form className="repository-center-composer multi-row" onSubmit={(event) => {
-        event.preventDefault();
-        void runAction("remote:save", async () => {
-          const pushUrl = editing.pushUrl?.trim();
-          await actions.onSaveRemote({ ...editing, name: editing.name.trim(), fetchUrl: editing.fetchUrl.trim(), pushUrl: pushUrl || (editing.id ? null : undefined) });
-          editRemote();
-        });
-      }}>
-        <label className="repository-center-field"><span>名称</span><input value={editing.name} onChange={(event) => setEditing((value) => ({ ...value, name: event.target.value }))} placeholder="origin" /></label>
-        <label className="repository-center-field grow"><span>Fetch URL</span><input value={editing.fetchUrl} onChange={(event) => setEditing((value) => ({ ...value, fetchUrl: event.target.value }))} placeholder="git@github.com:owner/repository.git" /></label>
-        <label className="repository-center-field grow"><span>Push URL（可选）</span><input value={editing.pushUrl ?? ""} onChange={(event) => setEditing((value) => ({ ...value, pushUrl: event.target.value }))} placeholder="留空则使用 Fetch URL" /><small>编辑时留空会清除独立 Push URL。</small></label>
-        <ActionButton label={editing.id ? "保存远程" : "添加远程"} actionKey="remote:save" pendingAction={pendingAction} disabled={!editing.name.trim() || !editing.fetchUrl.trim()} type="submit" icon={editing.id ? <Save size={15} /> : <Plus size={15} />} tone="primary" />
-        {editing.id ? <button className="repository-center-button secondary" type="button" onClick={() => editRemote()}><X size={15} />取消编辑</button> : null}
-      </form>
-      <ResourceBoundary section="remotes" resource={data.remotes} reload={reload}>{(remotes) => remotes.length === 0 ? <EmptyState icon={<Cloud size={20} />} title="没有远程仓库" description="添加 fetch 和 push 地址后可执行同步。" /> : <div className="repository-center-record-list">{remotes.map((remote) => <div className="repository-center-record" key={remote.id}>
-        <span className="repository-center-record-leading"><Cloud size={16} /></span>
-        <span className="repository-center-record-main"><strong>{remote.name}{remote.isDefaultFetch ? <em>默认拉取</em> : null}{remote.isDefaultPush ? <em>默认推送</em> : null}</strong><small>取：{remote.fetchUrl}</small><small>推：{remote.pushUrl}{remote.explicitPushUrl === undefined ? "（继承 Fetch URL）" : ""}</small></span>
-        <div className="repository-center-row-actions wrap">
-          <ActionButton label="编辑" actionKey={`remote:edit:${remote.id}`} pendingAction={pendingAction} onClick={() => editRemote(remote)} icon={<Pencil size={14} />} />
-          <ActionButton label="获取" actionKey={`remote:fetch:${remote.id}`} pendingAction={pendingAction} onClick={() => void runAction(`remote:fetch:${remote.id}`, () => actions.onFetchRemote(remote.id))} icon={<Download size={14} />} />
-          <ActionButton label="清理" actionKey={`remote:prune:${remote.id}`} pendingAction={pendingAction} onClick={() => void runAction(`remote:prune:${remote.id}`, () => actions.onPruneRemote(remote.id))} icon={<ListRestart size={14} />} />
-          {!remote.isDefaultFetch ? <ActionButton label="默认拉取" actionKey={`remote:default-fetch:${remote.id}`} pendingAction={pendingAction} onClick={() => void runAction(`remote:default-fetch:${remote.id}`, () => actions.onSetDefaultRemote({ remoteId: remote.id, role: "fetch" }))} icon={<ArrowDownToLine size={14} />} /> : null}
-          {!remote.isDefaultPush ? <ActionButton label="默认推送" actionKey={`remote:default-push:${remote.id}`} pendingAction={pendingAction} onClick={() => void runAction(`remote:default-push:${remote.id}`, () => actions.onSetDefaultRemote({ remoteId: remote.id, role: "push" }))} icon={<UploadCloud size={14} />} /> : null}
-          <ActionButton label="删除" actionKey={`remote:delete:${remote.id}`} pendingAction={pendingAction} onClick={() => void runAction(`remote:delete:${remote.id}`, () => actions.onDeleteRemote(remote.id))} icon={<Trash2 size={14} />} tone="danger" requiresConfirmation confirmLabel="确认删除远程" />
-        </div>
-      </div>)}</div>}</ResourceBoundary>
+      <SectionHeader icon={<UploadCloud size={17} />} title="发布到远程" description="本地已有提交时，只需填写远程仓库地址" />
+      <ResourceBoundary section="remotes" resource={data.remotes} reload={reload}>{(remotes) => <>
+        {data.branches.status === "ready" && !currentBranch ? (
+          <div className="repository-center-first-publish unavailable">
+            <span className="repository-center-first-publish-icon"><GitBranch size={19} /></span>
+            <span><strong>还不能发布</strong><small>请先在当前仓库完成一次提交，软件才能识别要发布的分支。</small></span>
+          </div>
+        ) : currentBranch && !currentBranch.upstream ? (
+          <form className="repository-center-first-publish" onSubmit={(event) => {
+            event.preventDefault();
+            const remoteUrl = remotes.length === 0 ? publishUrl.trim() : undefined;
+            const remoteId = remotes.length > 0 ? publishRemoteId : undefined;
+            void runAction("remote:first-publish", async () => {
+              const feedback = await actions.onPublishCurrentBranch({ remoteId, remoteUrl });
+              setPublishUrl("");
+              return feedback;
+            });
+          }}>
+            <div className="repository-center-first-publish-heading">
+              <span className="repository-center-first-publish-icon"><UploadCloud size={19} /></span>
+              <span><strong>首次发布</strong><small>自动配置默认远程并关联当前分支，无需执行命令。</small></span>
+            </div>
+            <div className="repository-center-publish-route" aria-label={`发布当前分支 ${currentBranch.name}`}>
+              <span><GitBranch size={14} />{currentBranch.name}</span>
+              <MoveRight size={16} />
+              <span><Cloud size={14} />{remotes.length === 0 ? "origin" : publishRemoteId || "选择远程"}</span>
+            </div>
+            {remotes.length === 0 ? (
+              <label className="repository-center-field grow"><span>远程仓库地址</span><input value={publishUrl} onChange={(event) => setPublishUrl(event.target.value)} placeholder="粘贴 GitHub、Gitee 或 GitLab 仓库地址" autoComplete="off" /><small>支持 HTTPS 和 SSH 地址；远程名称自动使用 origin。</small></label>
+            ) : (
+              <label className="repository-center-field grow"><span>发布到</span><select value={publishRemoteId} onChange={(event) => setPublishRemoteId(event.target.value)}>{remotes.map((remote) => <option value={remote.id} key={remote.id}>{remote.name} · {remote.pushUrl}</option>)}</select><small>将自动设为默认推送远程并关联 {currentBranch.name}。</small></label>
+            )}
+            <ActionButton label="发布当前分支" actionKey="remote:first-publish" pendingAction={pendingAction} disabled={remotes.length === 0 ? !publishUrl.trim() : !publishRemoteId} type="submit" icon={<UploadCloud size={15} />} tone="primary" />
+          </form>
+        ) : currentBranch?.upstream ? (
+          <div className="repository-center-first-publish connected">
+            <span className="repository-center-first-publish-icon"><Check size={18} /></span>
+            <span><strong>当前分支已连接</strong><small>{currentBranch.name} 正在跟踪 {currentBranch.upstream}。</small></span>
+          </div>
+        ) : null}
+
+        <DisclosureSection icon={<Settings2 size={17} />} title="远程地址管理" description="自定义名称、Fetch URL 或独立 Push URL" defaultOpen={remotes.length > 0}>
+          <form className="repository-center-composer multi-row" onSubmit={(event) => {
+            event.preventDefault();
+            void runAction("remote:save", async () => {
+              const pushUrl = editing.pushUrl?.trim();
+              await actions.onSaveRemote({ ...editing, name: editing.name.trim(), fetchUrl: editing.fetchUrl.trim(), pushUrl: pushUrl || (editing.id ? null : undefined) });
+              editRemote();
+            });
+          }}>
+            <label className="repository-center-field"><span>名称</span><input value={editing.name} onChange={(event) => setEditing((value) => ({ ...value, name: event.target.value }))} placeholder="origin" /></label>
+            <label className="repository-center-field grow"><span>Fetch URL</span><input value={editing.fetchUrl} onChange={(event) => setEditing((value) => ({ ...value, fetchUrl: event.target.value }))} placeholder="git@github.com:owner/repository.git" /></label>
+            <label className="repository-center-field grow"><span>Push URL（可选）</span><input value={editing.pushUrl ?? ""} onChange={(event) => setEditing((value) => ({ ...value, pushUrl: event.target.value }))} placeholder="留空则使用 Fetch URL" /><small>编辑时留空会清除独立 Push URL。</small></label>
+            <ActionButton label={editing.id ? "保存远程" : "添加远程"} actionKey="remote:save" pendingAction={pendingAction} disabled={!editing.name.trim() || !editing.fetchUrl.trim()} type="submit" icon={editing.id ? <Save size={15} /> : <Plus size={15} />} tone="primary" />
+            {editing.id ? <button className="repository-center-button secondary" type="button" onClick={() => editRemote()}><X size={15} />取消编辑</button> : null}
+          </form>
+          {remotes.length === 0 ? <EmptyState icon={<Cloud size={20} />} title="没有远程仓库" description="使用上面的首次发布即可自动创建 origin。" /> : <div className="repository-center-record-list">{remotes.map((remote) => <div className="repository-center-record" key={remote.id}>
+            <span className="repository-center-record-leading"><Cloud size={16} /></span>
+            <span className="repository-center-record-main"><strong>{remote.name}{remote.isDefaultFetch ? <em>默认拉取</em> : null}{remote.isDefaultPush ? <em>默认推送</em> : null}</strong><small>取：{remote.fetchUrl}</small><small>推：{remote.pushUrl}{remote.explicitPushUrl === undefined ? "（继承 Fetch URL）" : ""}</small></span>
+            <div className="repository-center-row-actions wrap">
+              <ActionButton label="编辑" actionKey={`remote:edit:${remote.id}`} pendingAction={pendingAction} onClick={() => editRemote(remote)} icon={<Pencil size={14} />} />
+              <ActionButton label="获取" actionKey={`remote:fetch:${remote.id}`} pendingAction={pendingAction} onClick={() => void runAction(`remote:fetch:${remote.id}`, () => actions.onFetchRemote(remote.id))} icon={<Download size={14} />} />
+              <ActionButton label="清理" actionKey={`remote:prune:${remote.id}`} pendingAction={pendingAction} onClick={() => void runAction(`remote:prune:${remote.id}`, () => actions.onPruneRemote(remote.id))} icon={<ListRestart size={14} />} />
+              {!remote.isDefaultFetch ? <ActionButton label="默认拉取" actionKey={`remote:default-fetch:${remote.id}`} pendingAction={pendingAction} onClick={() => void runAction(`remote:default-fetch:${remote.id}`, () => actions.onSetDefaultRemote({ remoteId: remote.id, role: "fetch" }))} icon={<ArrowDownToLine size={14} />} /> : null}
+              {!remote.isDefaultPush ? <ActionButton label="默认推送" actionKey={`remote:default-push:${remote.id}`} pendingAction={pendingAction} onClick={() => void runAction(`remote:default-push:${remote.id}`, () => actions.onSetDefaultRemote({ remoteId: remote.id, role: "push" }))} icon={<UploadCloud size={14} />} /> : null}
+              <ActionButton label="删除" actionKey={`remote:delete:${remote.id}`} pendingAction={pendingAction} onClick={() => void runAction(`remote:delete:${remote.id}`, () => actions.onDeleteRemote(remote.id))} icon={<Trash2 size={14} />} tone="danger" requiresConfirmation confirmLabel="确认删除远程" />
+            </div>
+          </div>)}</div>}
+        </DisclosureSection>
+      </>}</ResourceBoundary>
     </section>
 
     <DisclosureSection icon={<Link2 size={17} />} title="托管平台入口" description="在浏览器中打开仓库、提交、分支、PR 或 Issue">
