@@ -240,6 +240,11 @@ export function ConsolePanel({ project, disabledProjectIds, theme, visible, maxi
       return;
     }
 
+    if (tabsRef.current.length > 0) {
+      setActiveTabId(null);
+      return;
+    }
+
     createTerminalTab(project);
   }, [project?.id, project?.remote?.connectionEnabled, visible]);
 
@@ -1076,7 +1081,7 @@ function createTerminal(host: HTMLElement, theme: ThemeName): Terminal {
     fontSize: TERMINAL_FONT_SIZE,
     lineHeight: 1.25,
     minimumContrastRatio: terminalContrastRatio(theme),
-    scrollback: 5000,
+    scrollback: 2500,
     theme: terminalTheme(host, theme)
   });
 }

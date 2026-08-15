@@ -68,15 +68,17 @@ const DEFAULT_SOURCE_PANE_HEIGHT = 320;
 const DEFAULT_CONSOLE_HEIGHT = 240;
 const MIN_CONSOLE_HEIGHT = 80;
 const CONSOLE_TOP_SNAP_DISTANCE = 36;
-const SELECTED_PROJECT_REFRESH_INTERVAL_MS = 4000;
-const REMOTE_PROJECT_REFRESH_INTERVAL_MS = 10_000;
-const PROJECT_LIST_STATUS_REFRESH_INTERVAL_MS = 20000;
+const SELECTED_PROJECT_REFRESH_INTERVAL_MS = 8000;
+const REMOTE_PROJECT_REFRESH_INTERVAL_MS = 15_000;
+const PROJECT_LIST_STATUS_REFRESH_INTERVAL_MS = 60_000;
 const PROJECT_LIST_STATUS_BATCH_SIZE = 3;
 const REMOTE_PROJECT_LIST_INITIAL_DELAY_MS = 15_000;
 const REMOTE_PROJECT_LIST_REFRESH_INTERVAL_MS = 120_000;
 const PROJECT_SELECTION_LOAD_DELAY_MS = 180;
 const PROJECT_DATA_CACHE_TTL_MS = 20_000;
 const GRAPH_HISTORY_CACHE_TTL_MS = 20_000;
+const PROJECT_DATA_CACHE_MAX_ENTRIES = 12;
+const GRAPH_HISTORY_CACHE_MAX_ENTRIES = 24;
 const RESET_OPERATION_TIMEOUT_MS = 45_000;
 const GIT_DOWNLOAD_URL = "https://git-scm.com/downloads";
 const HISTORY_PAGE_SIZE = 150;
@@ -351,8 +353,10 @@ export function App() {
   }
 
   function readFreshProjectDataCache(projectId: string, filter: GitHistoryFilter) {
-    const snapshot = projectDataCacheRef.current.get(projectCacheKey(projectId, filter));
+    const key = projectCacheKey(projectId, filter);
+    const snapshot = projectDataCacheRef.current.get(key);
     if (!snapshot || Date.now() - snapshot.loadedAt > PROJECT_DATA_CACHE_TTL_MS) {
+      projectDataCacheRef.current.delete(key);
       return undefined;
     }
 
@@ -360,15 +364,17 @@ export function App() {
   }
 
   function writeProjectDataCache(project: GitProject, filter: GitHistoryFilter, snapshot: Omit<ProjectDataSnapshot, "loadedAt">) {
-    projectDataCacheRef.current.set(projectCacheKey(project.id, filter), {
+    setBoundedCache(projectDataCacheRef.current, projectCacheKey(project.id, filter), {
       ...snapshot,
       loadedAt: Date.now()
-    });
+    }, PROJECT_DATA_CACHE_MAX_ENTRIES);
   }
 
   function readFreshGraphHistoryCache(projectId: string, filter: GitHistoryFilter) {
-    const snapshot = graphHistoryCacheRef.current.get(projectCacheKey(projectId, filter));
+    const key = projectCacheKey(projectId, filter);
+    const snapshot = graphHistoryCacheRef.current.get(key);
     if (!snapshot || Date.now() - snapshot.loadedAt > GRAPH_HISTORY_CACHE_TTL_MS) {
+      graphHistoryCacheRef.current.delete(key);
       return undefined;
     }
 
@@ -376,10 +382,10 @@ export function App() {
   }
 
   function writeGraphHistoryCache(project: GitProject, filter: GitHistoryFilter, snapshot: Omit<GraphHistorySnapshot, "loadedAt">) {
-    graphHistoryCacheRef.current.set(projectCacheKey(project.id, filter), {
+    setBoundedCache(graphHistoryCacheRef.current, projectCacheKey(project.id, filter), {
       ...snapshot,
       loadedAt: Date.now()
-    });
+    }, GRAPH_HISTORY_CACHE_MAX_ENTRIES);
   }
 
   function invalidateProjectCaches(projectId: string) {
@@ -1072,7 +1078,7 @@ export function App() {
     const remoteMode = mode === "remote";
     projectSnapshot = projectSnapshot.filter((project) => remoteMode
       ? Boolean(project.remote) && project.remote?.connectionEnabled !== false && project.id !== selectedProjectIdRef.current
-      : !project.remote && gitDependency.status === "ready");
+      : !project.remote && project.id !== selectedProjectIdRef.current && gitDependency.status === "ready");
     const busyRef = remoteMode ? remoteProjectListRefreshBusyRef : projectListRefreshBusyRef;
     if (isDisposed() || busyRef.current || projectSnapshot.length === 0) {
       return;
@@ -3680,4 +3686,16 @@ function resolveTheme(mode: ThemeMode): "light" | "dark" {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function setBoundedCache<T>(cache: Map<string, T>, key: string, value: T, maxEntries: number) {
+  cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > maxEntries) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey === undefined) {
+      break;
+    }
+    cache.delete(oldestKey);
+  }
 }
