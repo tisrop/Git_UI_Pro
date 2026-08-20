@@ -1,6 +1,7 @@
 import { Check, ChevronDown, ChevronRight, Filter, FolderClosed, FolderOpen, FolderPlus, FolderSearch, GitBranch, Pin, PinOff, Search, Server, Trash2 } from "lucide-react";
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -25,6 +26,7 @@ interface ProjectRailProps {
   onRemoveProject: (projectId: string) => void;
   onReorderProjects: (projectIds: string[]) => void;
   onToggleProjectPinned: (projectId: string) => void;
+  onSetProjectGroup: (projectId: string, groupId?: string) => void | Promise<void>;
   onSetRemoteConnectionEnabled: (projectId: string, enabled: boolean) => void | Promise<void>;
   onSwitchBranch: (project: GitProject) => void;
   footer?: ReactNode;
@@ -38,8 +40,8 @@ type ProjectContextMenuState = {
 
 type ProjectStatusFilterId = "pinned" | "dirty" | "clean" | "conflict" | "ahead" | "behind" | "diverged" | "unloaded";
 
-const PROJECT_CONTEXT_MENU_WIDTH = 184;
-const PROJECT_CONTEXT_MENU_HEIGHT = 96;
+const PROJECT_CONTEXT_MENU_WIDTH = 216;
+const PROJECT_CONTEXT_MENU_VIEWPORT_GAP = 8;
 const PROJECT_STATUS_FILTER_MENU_WIDTH = 248;
 const projectStatusFilterGroups: Array<{
   label: string;
@@ -81,6 +83,7 @@ export function ProjectRail({
   onRemoveProject,
   onReorderProjects,
   onToggleProjectPinned,
+  onSetProjectGroup,
   onSetRemoteConnectionEnabled,
   onSwitchBranch,
   footer
@@ -181,6 +184,19 @@ export function ProjectRail({
     };
   }, [contextMenu]);
 
+  useLayoutEffect(() => {
+    if (!contextMenu || !contextMenuRef.current) {
+      return;
+    }
+
+    const rect = contextMenuRef.current.getBoundingClientRect();
+    const nextX = Math.max(PROJECT_CONTEXT_MENU_VIEWPORT_GAP, Math.min(contextMenu.x, window.innerWidth - rect.width - PROJECT_CONTEXT_MENU_VIEWPORT_GAP));
+    const nextY = Math.max(PROJECT_CONTEXT_MENU_VIEWPORT_GAP, Math.min(contextMenu.y, window.innerHeight - rect.height - PROJECT_CONTEXT_MENU_VIEWPORT_GAP));
+    if (Math.abs(nextX - contextMenu.x) > 0.5 || Math.abs(nextY - contextMenu.y) > 0.5) {
+      setContextMenu((current) => current ? { ...current, x: nextX, y: nextY } : current);
+    }
+  }, [contextMenu, groups.length]);
+
   useEffect(() => {
     if (!filterMenuOpen) {
       return;
@@ -262,8 +278,8 @@ export function ProjectRail({
     contextMenuOpenerRef.current = opener;
     setContextMenu({
       project,
-      x: Math.max(8, Math.min(x, window.innerWidth - PROJECT_CONTEXT_MENU_WIDTH - 8)),
-      y: Math.max(8, Math.min(y, window.innerHeight - PROJECT_CONTEXT_MENU_HEIGHT - 8))
+      x: Math.max(PROJECT_CONTEXT_MENU_VIEWPORT_GAP, Math.min(x, window.innerWidth - PROJECT_CONTEXT_MENU_WIDTH - PROJECT_CONTEXT_MENU_VIEWPORT_GAP)),
+      y: Math.max(PROJECT_CONTEXT_MENU_VIEWPORT_GAP, Math.min(y, window.innerHeight - PROJECT_CONTEXT_MENU_VIEWPORT_GAP))
     });
   }
 
@@ -657,6 +673,47 @@ export function ProjectRail({
                 {contextMenu.project.favorite ? <PinOff size={14} /> : <Pin size={14} />}
                 {contextMenu.project.favorite ? "取消置顶" : "置顶项目"}
               </button>
+              <div className="menu-separator" role="separator" />
+              <div className="project-context-menu-label">项目分组</div>
+              <div className="project-context-group-options" role="group" aria-label={`设置 ${contextMenu.project.name} 的项目分组`}>
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={!contextMenu.project.groupId}
+                  className={!contextMenu.project.groupId ? "active" : ""}
+                  onClick={() => {
+                    if (contextMenu.project.groupId) {
+                      void onSetProjectGroup(contextMenu.project.id, undefined);
+                    }
+                    closeContextMenu(true);
+                  }}
+                >
+                  <span className="project-context-group-check" aria-hidden="true"><Check size={13} /></span>
+                  <span>未分组</span>
+                </button>
+                {[...groups].sort((left, right) => left.sortOrder - right.sortOrder).map((group) => {
+                  const selected = contextMenu.project.groupId === group.id;
+                  return (
+                    <button
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={selected}
+                      className={selected ? "active" : ""}
+                      key={group.id}
+                      onClick={() => {
+                        if (!selected) {
+                          void onSetProjectGroup(contextMenu.project.id, group.id);
+                        }
+                        closeContextMenu(true);
+                      }}
+                    >
+                      <span className="project-context-group-check" aria-hidden="true"><Check size={13} /></span>
+                      <span>{group.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="menu-separator" role="separator" />
               <button
                 type="button"
                 role="menuitem"

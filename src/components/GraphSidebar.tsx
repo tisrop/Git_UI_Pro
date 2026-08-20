@@ -999,12 +999,14 @@ export function GraphSidebar({
               );
             })}
             {virtualGraphEnabled && graphVirtualRange.bottomPadding > 0 ? <div className="graph-virtual-spacer" style={{ height: graphVirtualRange.bottomPadding }} aria-hidden="true" /> : null}
-            {hasMore ? (
-              <button type="button" className="graph-load-more" disabled={loadingMore} onClick={onLoadMore}>
-                <RefreshCw size={14} className={loadingMore ? "spin" : ""} />
-                {loadingMore ? "正在加载" : "加载更多提交"}
-              </button>
-            ) : commits.length > 0 ? <div className="graph-history-end">已加载到当前筛选范围末尾</div> : null}
+            {!loading && !loadingMore ? (
+              hasMore ? (
+                <button type="button" className="graph-load-more" onClick={onLoadMore}>
+                  <RefreshCw size={14} />
+                  加载更多提交
+                </button>
+              ) : commits.length > 0 ? <div className="graph-history-end">已加载到当前筛选范围末尾</div> : null
+            ) : null}
           </div>
         </>
       ) : null}
@@ -2089,16 +2091,36 @@ function CommitHoverCard({
 }) {
   const bodyText = commit.body?.trim();
   const cardRef = useRef<HTMLDivElement>(null);
-  const [cardHeight, setCardHeight] = useState<number>();
-  const style = commitHoverCardStyle(x, y, cardHeight);
+  const [cardSize, setCardSize] = useState<{ width: number; height: number }>();
+  const style = commitHoverCardStyle(x, y, cardSize);
 
   useLayoutEffect(() => {
-    const nextHeight = cardRef.current?.getBoundingClientRect().height;
-    if (!nextHeight) {
+    const card = cardRef.current;
+    if (!card) {
       return;
     }
 
-    setCardHeight((current) => (current && Math.abs(current - nextHeight) < 1 ? current : nextHeight));
+    const measureCard = () => {
+      const rect = card.getBoundingClientRect();
+      if (!rect.width || !rect.height) {
+        return;
+      }
+
+      setCardSize((current) => (
+        current && Math.abs(current.width - rect.width) < 1 && Math.abs(current.height - rect.height) < 1
+          ? current
+          : { width: rect.width, height: rect.height }
+      ));
+    };
+
+    measureCard();
+    const resizeObserver = new ResizeObserver(measureCard);
+    resizeObserver.observe(card);
+    window.addEventListener("resize", measureCard);
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", measureCard);
+    };
   }, [bodyText, commit.hash]);
 
   return (
@@ -2132,13 +2154,14 @@ function CommitHoverCard({
   );
 }
 
-function commitHoverCardStyle(x: number, targetY: number, cardHeight?: number): CSSProperties {
+function commitHoverCardStyle(x: number, targetY: number, cardSize?: { width: number; height: number }): CSSProperties {
   if (typeof window === "undefined") {
     return { left: x, top: targetY };
   }
 
-  const left = Math.max(COMMIT_HOVER_VIEWPORT_GAP, Math.min(x, window.innerWidth - COMMIT_HOVER_CARD_WIDTH - COMMIT_HOVER_VIEWPORT_GAP));
-  const measuredHeight = cardHeight ?? 0;
+  const measuredWidth = cardSize?.width ?? Math.min(COMMIT_HOVER_CARD_WIDTH, window.innerWidth - COMMIT_HOVER_VIEWPORT_GAP * 2);
+  const left = Math.max(COMMIT_HOVER_VIEWPORT_GAP, Math.min(x, window.innerWidth - measuredWidth - COMMIT_HOVER_VIEWPORT_GAP));
+  const measuredHeight = cardSize?.height ?? 0;
   const preferredTop = targetY - COMMIT_HOVER_TOP_OFFSET;
   const maxTop = measuredHeight > 0 ? window.innerHeight - measuredHeight - COMMIT_HOVER_VIEWPORT_GAP : window.innerHeight - COMMIT_HOVER_VIEWPORT_GAP;
   const top = Math.max(COMMIT_HOVER_VIEWPORT_GAP, Math.min(preferredTop, maxTop));

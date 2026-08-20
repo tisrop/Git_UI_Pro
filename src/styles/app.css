@@ -4600,7 +4600,10 @@ button {
 .project-context-menu {
   position: fixed;
   z-index: 120;
-  min-width: 168px;
+  width: 216px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
 }
 
 .project-context-menu button {
@@ -4615,6 +4618,47 @@ button {
 
 .project-context-menu button.danger:hover {
   background: color-mix(in srgb, var(--danger) 11%, var(--surface));
+}
+
+.project-context-menu-label {
+  padding: 5px 9px 3px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.project-context-group-options {
+  display: grid;
+}
+
+.project-context-group-options button {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+}
+
+.project-context-group-options button > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-context-group-options button.active {
+  color: var(--text-strong);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.project-context-group-check {
+  display: grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  color: var(--accent);
+  opacity: 0;
+}
+
+.project-context-group-options button.active .project-context-group-check {
+  opacity: 1;
 }
 
 .source-control-pane {
@@ -5392,8 +5436,12 @@ button {
 /* Branch and hover interaction pass */
 .commit-hover-card {
   pointer-events: auto;
-  width: 400px;
+  display: flex;
+  flex-direction: column;
+  width: min(400px, calc(100vw - 24px));
   max-width: min(400px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  overflow: hidden;
   border-radius: 4px;
   font-size: 12px;
   animation: none;
@@ -5414,12 +5462,23 @@ button {
 }
 
 .commit-hover-subject {
+  flex: 0 1 auto;
+  max-height: 7.2em;
+  overflow-y: auto;
   font-size: 13px;
   line-height: 1.35;
 }
 
 .commit-hover-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   font-size: 12px;
+}
+
+.commit-hover-author,
+.commit-hover-footer {
+  flex: 0 0 auto;
 }
 
 .source-control-pane .scm-commit-actions {

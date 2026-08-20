@@ -1555,6 +1555,52 @@ export function App() {
     }
   }
 
+  async function handleSetProjectGroup(projectId: string, groupId?: string) {
+    const currentProjects = projectsRef.current;
+    const project = currentProjects.find((item) => item.id === projectId);
+    if (!project || project.groupId === groupId) {
+      return;
+    }
+
+    const previousGroupId = project.groupId;
+    const nextProjects = currentProjects.map((item) => item.id === projectId ? { ...item, groupId } : item);
+    projectsRef.current = nextProjects;
+    setProjects(nextProjects);
+
+    try {
+      const savedProject = await apiClient.setProjectGroup(projectId, groupId);
+      const latestProjects = projectsRef.current;
+      const latestProject = latestProjects.find((item) => item.id === projectId) ?? project;
+      if (latestProject.groupId !== groupId) {
+        return;
+      }
+
+      const mergedProject: GitProject = {
+        ...latestProject,
+        ...savedProject,
+        groupId,
+        status: latestProject.status,
+        statusError: latestProject.statusError
+      };
+      const savedProjects = latestProjects.map((item) => item.id === projectId ? mergedProject : item);
+      projectsRef.current = savedProjects;
+      setProjects(savedProjects);
+      const groupName = groupId ? projectLibrary.groups.find((group) => group.id === groupId)?.name ?? "指定分组" : "未分组";
+      notifySuccess("已更新项目分组", `${project.name} → ${groupName}`);
+    } catch (error) {
+      const latestProjects = projectsRef.current;
+      const latestProject = latestProjects.find((item) => item.id === projectId);
+      if (latestProject?.groupId !== groupId) {
+        return;
+      }
+
+      const rolledBackProjects = latestProjects.map((item) => item.id === projectId ? { ...item, groupId: previousGroupId } : item);
+      projectsRef.current = rolledBackProjects;
+      setProjects(rolledBackProjects);
+      notifyError(error instanceof Error ? error.message : "保存项目分组失败");
+    }
+  }
+
   async function handleSetRemoteProjectConnectionEnabled(projectId: string, enabled: boolean) {
     const currentProject = projectsRef.current.find((project) => project.id === projectId);
     if (!currentProject?.remote) {
@@ -2806,6 +2852,7 @@ export function App() {
           onRemoveProject={handleRemoveProject}
           onReorderProjects={(projectIds) => void handleReorderProjects(projectIds)}
           onToggleProjectPinned={(projectId) => void handleToggleProjectPinned(projectId)}
+          onSetProjectGroup={handleSetProjectGroup}
           onSetRemoteConnectionEnabled={handleSetRemoteProjectConnectionEnabled}
           onSwitchBranch={(project) => void switchBranchFromToolbar(project)}
         />

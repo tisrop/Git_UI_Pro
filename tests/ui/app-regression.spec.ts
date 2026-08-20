@@ -582,13 +582,120 @@ test("键盘可以打开仓库中心并操作焦点和项目菜单", async ({ pa
   await page.keyboard.press("Shift+F10");
   const menu = page.getByRole("menu");
   await expect(menu).toBeVisible();
-  const menuItems = menu.getByRole("menuitem");
+  const menuItems = menu.locator("[role^='menuitem']");
   await expect(menuItems.first()).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(menuItems.nth(1)).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(menu).toBeHidden();
   await expect(project).toBeFocused();
+});
+
+test("项目右键菜单可以快速调整分组", async ({ page }) => {
+  await page.goto("/");
+  const project = page.locator(".project-rail-item").filter({ hasText: "Git UI Pro" }).first();
+  await expect(project).toBeVisible();
+  await project.click({ button: "right" });
+
+  const menu = page.getByRole("menu");
+  await expect(menu).toBeVisible();
+  await expect(menu).toContainText("项目分组");
+  await expect(menu.getByRole("menuitemradio", { name: "个人项目" })).toHaveAttribute("aria-checked", "true");
+
+  await menu.getByRole("menuitemradio", { name: "工作项目" }).click();
+  await expect(menu).toBeHidden();
+  const workGroup = page.locator(".project-rail-group").filter({
+    has: page.locator(".project-rail-group-header").filter({ hasText: "工作项目" })
+  });
+  await expect(workGroup.locator(".project-rail-item").filter({ hasText: "Git UI Pro" })).toBeVisible();
+  await expect(page.getByLabel("Notifications alt+T").getByText("已更新项目分组")).toBeVisible();
+});
+
+test("加载更多提交期间不重复显示加载入口", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".graph-commit-row").first()).toBeVisible();
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __finishHistoryLoad?: () => void;
+      __historyLoadPending?: boolean;
+    };
+    const commit = {
+      hash: "1111111111111111111111111111111111111111",
+      shortHash: "1111111",
+      parents: [],
+      subject: "用于验证分页加载状态的提交",
+      body: "分页请求完成前不应重复展示加载入口。",
+      authorName: "UI Test",
+      authorEmail: "ui-test@example.com",
+      authorDate: "2026/08/20 10:00",
+      committerName: "UI Test",
+      committerEmail: "ui-test@example.com",
+      committerDate: "2026/08/20 10:00",
+      refs: [],
+      lane: 0,
+      color: "#2f9af8",
+      files: []
+    };
+    const firstPage = { commits: [commit], hasMore: true, nextSkip: 1 };
+    const lastPage = { commits: [], hasMore: false, nextSkip: 1 };
+    window.gitUI = {
+      getHistoryPage: async (_repository, query) => {
+        if ((query.skip ?? 0) === 0) {
+          return firstPage;
+        }
+
+        testWindow.__historyLoadPending = true;
+        return new Promise((resolve) => {
+          testWindow.__finishHistoryLoad = () => {
+            testWindow.__historyLoadPending = false;
+            resolve(lastPage);
+          };
+        });
+      },
+      getHistoryRefs: async () => []
+    } as unknown as typeof window.gitUI;
+  });
+
+  await page.getByRole("button", { name: "选择图表引用" }).click();
+  await page.getByRole("dialog", { name: "选择图表引用" }).getByRole("menuitemradio", { name: /全部/ }).click();
+  const loadMore = page.getByRole("button", { name: "加载更多提交" });
+  await expect(loadMore).toBeVisible();
+  await loadMore.click();
+  await expect.poll(() => page.evaluate(() => Boolean((window as typeof window & { __historyLoadPending?: boolean }).__historyLoadPending))).toBe(true);
+  await expect(loadMore).toBeHidden();
+  await page.evaluate(() => (window as typeof window & { __finishHistoryLoad?: () => void }).__finishHistoryLoad?.());
+  await expect(page.locator(".graph-history-end")).toBeVisible();
+});
+
+test("长提交悬浮详情在小窗口内滚动而不越界", async ({ page }) => {
+  await page.setViewportSize({ width: 760, height: 320 });
+  await page.goto("/");
+  await expect(page.locator(".graph-commit-row").first()).toBeVisible();
+  await page.locator(".graph-commit-row").first().hover();
+
+  const card = page.locator(".commit-hover-card");
+  await expect(card).toBeVisible();
+  const body = card.locator(".commit-hover-body");
+  await expect(body).toBeVisible();
+  await body.evaluate((element) => {
+    element.textContent = Array.from(
+      { length: 40 },
+      (_, index) => `${index + 1}. 这是用于验证超长提交说明在小窗口内滚动展示的回归文本。`
+    ).join("\n");
+  });
+
+  await expect.poll(async () => card.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.left >= 0
+      && rect.top >= 0
+      && rect.right <= window.innerWidth + 1
+      && rect.bottom <= window.innerHeight + 1;
+  })).toBe(true);
+  const metrics = await body.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight
+  }));
+  expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight);
 });
 
 test("亮色和暗色主题保持关键文字可读并完成截图 smoke", async ({ page }, testInfo) => {
