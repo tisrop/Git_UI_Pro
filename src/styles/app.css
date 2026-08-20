@@ -3014,11 +3014,13 @@ button {
   min-height: 0;
   margin: 0;
   overflow: auto;
-  padding: 12px 48px 28px 14px;
+  padding: 0;
+  background: color-mix(in srgb, var(--sunken) 94%, var(--panel));
 }
 
 .editor-diff-panel.split-mode {
   overflow-x: hidden;
+  padding-bottom: 14px;
 }
 
 .editor-diff-panel.media-mode {
@@ -3440,7 +3442,9 @@ button {
 }
 
 .editor-diff-panel .diff-lines {
+  min-height: 100%;
   min-width: 720px;
+  border: 0;
   border-radius: 0;
 }
 
@@ -3595,8 +3599,9 @@ button {
 .split-diff-grid {
   width: 100%;
   min-width: 100%;
-  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
-  border-radius: 6px;
+  min-height: 100%;
+  border: 0;
+  border-radius: 0;
   overflow: hidden;
   background: color-mix(in srgb, var(--sunken) 94%, var(--panel));
 }
@@ -3604,7 +3609,7 @@ button {
 .split-diff-header {
   display: grid;
   position: sticky;
-  top: -12px;
+  top: 0;
   z-index: 2;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   border-bottom: 1px solid color-mix(in srgb, var(--border) 68%, transparent);
@@ -3706,11 +3711,27 @@ button {
   white-space: pre;
 }
 
+.split-diff-inline-change {
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.split-diff-cell.delete .split-diff-inline-change {
+  background: color-mix(in srgb, var(--danger) 38%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 16%, transparent);
+}
+
+.split-diff-cell.add .split-diff-inline-change {
+  background: color-mix(in srgb, var(--success) 38%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--success) 16%, transparent);
+}
+
 .split-diff-horizontal-scroll {
   position: absolute;
-  right: 50px;
-  bottom: 4px;
-  left: 14px;
+  right: 0;
+  bottom: 0;
+  left: 0;
   z-index: 4;
   height: 14px;
   overflow-x: auto;
@@ -6933,8 +6954,8 @@ button {
 
 .graph-commit-folder-row {
   display: grid;
-  grid-template-columns: calc(var(--graph-file-gutter) + var(--graph-file-indent, 0px)) 20px minmax(0, 1fr);
-  gap: 6px;
+  grid-template-columns: calc(var(--graph-file-gutter) + var(--graph-file-indent, 0px)) 16px 18px minmax(0, 1fr);
+  gap: 3px;
   align-items: center;
   width: 100%;
   min-height: 24px;
@@ -6951,8 +6972,12 @@ button {
   background: var(--surface);
 }
 
-.graph-commit-folder-row svg {
+.graph-commit-folder-row > svg:not(.graph-commit-folder-icon) {
   color: var(--text);
+}
+
+.graph-commit-folder-icon {
+  color: color-mix(in srgb, var(--blue) 72%, var(--muted-strong));
 }
 
 .graph-commit-folder-name {
@@ -8013,8 +8038,8 @@ code,
 }
 
 .editor-diff-panel .diff-lines {
-  border-radius: 6px;
-  overflow: hidden;
+  border-radius: 0;
+  overflow: visible;
 }
 
 .source-control-pane .scm-panel-toggle,

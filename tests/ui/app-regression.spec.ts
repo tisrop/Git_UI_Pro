@@ -713,6 +713,53 @@ test("加载更多提交期间不重复显示加载入口", async ({ page }) => 
   await expect(page.locator(".graph-history-end")).toBeVisible();
 });
 
+test("文件对比铺满详情区并高亮行内变更", async ({ page }) => {
+  await page.goto("/");
+  const modifiedFile = page.locator(".scm-file-row").filter({ hasText: "App.tsx" }).first();
+  await expect(modifiedFile).toBeVisible();
+  await modifiedFile.click();
+
+  const diffPanel = page.locator(".editor-diff-panel.split-mode");
+  const diffGrid = diffPanel.locator(".split-diff-grid");
+  await expect(diffGrid).toBeVisible();
+  await expect(diffGrid.locator(".split-diff-inline-change")).toHaveCount(2);
+
+  const metrics = await diffPanel.evaluate((panel) => {
+    const grid = panel.querySelector<HTMLElement>(".split-diff-grid")!;
+    const panelRect = panel.getBoundingClientRect();
+    const gridRect = grid.getBoundingClientRect();
+    return {
+      panelClientHeight: panel.clientHeight,
+      panelWidth: panelRect.width,
+      gridHeight: gridRect.height,
+      gridWidth: gridRect.width,
+      horizontalInset: gridRect.left - panelRect.left
+    };
+  });
+
+  expect(metrics.horizontalInset).toBeLessThanOrEqual(1);
+  expect(metrics.gridWidth).toBeGreaterThanOrEqual(metrics.panelWidth - 20);
+  expect(metrics.gridHeight).toBeGreaterThanOrEqual(metrics.panelClientHeight - 16);
+});
+
+test("提交变更文件默认使用可折叠树形视图", async ({ page }) => {
+  await page.goto("/");
+  const firstCommit = page.locator(".graph-commit-row").first();
+  await expect(firstCommit).toBeVisible();
+  await firstCommit.click();
+
+  const tree = page.locator(".graph-commit-file-tree");
+  await expect(tree).toBeVisible();
+  const docsFolder = tree.locator(".graph-commit-folder-row").filter({ hasText: "docs" });
+  await expect(docsFolder).toHaveAttribute("aria-expanded", "true");
+  await expect(docsFolder.locator(".graph-commit-folder-icon")).toBeVisible();
+  await expect(tree.locator(".graph-commit-file-row").filter({ hasText: "PRD.md" })).toBeVisible();
+
+  await docsFolder.click();
+  await expect(docsFolder).toHaveAttribute("aria-expanded", "false");
+  await expect(tree.locator(".graph-commit-file-row").filter({ hasText: "PRD.md" })).toBeHidden();
+});
+
 test("长提交悬浮详情在小窗口内滚动而不越界", async ({ page }) => {
   await page.setViewportSize({ width: 760, height: 320 });
   await page.goto("/");

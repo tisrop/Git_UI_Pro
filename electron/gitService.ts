@@ -76,6 +76,8 @@ export interface DiffLine {
   content: string;
 }
 
+const FULL_FILE_DIFF_CONTEXT = "--unified=2147483647";
+
 export interface ConflictFileDetails {
   path: string;
   baseContent?: string;
@@ -1059,10 +1061,11 @@ export class GitService {
       throw new Error("找不到指定提交。");
     }
 
+    const fullFileContext = filePath ? [FULL_FILE_DIFF_CONTEXT] : [];
     const args =
       commit.parents.length > 1
-        ? ["diff", "--patch", "--find-renames", "--no-ext-diff", `${hash}^1`, hash]
-        : ["show", "--format=", "--patch", "--find-renames", "--no-ext-diff", hash];
+        ? ["diff", "--patch", ...fullFileContext, "--find-renames", "--no-ext-diff", `${hash}^1`, hash]
+        : ["show", "--format=", "--patch", ...fullFileContext, "--find-renames", "--no-ext-diff", hash];
     if (filePath) {
       args.push("--", filePath);
     }
@@ -1113,7 +1116,9 @@ export class GitService {
   }
 
   async getWorktreeDiff(repositoryPath: RepositoryLocation, filePath: string, staged: boolean): Promise<DiffLine[]> {
-    const args = staged ? ["diff", "--cached", "--", filePath] : ["diff", "--", filePath];
+    const args = staged
+      ? ["diff", "--cached", FULL_FILE_DIFF_CONTEXT, "--", filePath]
+      : ["diff", FULL_FILE_DIFF_CONTEXT, "--", filePath];
     const result = await this.run(repositoryPath, args);
     if (!result.ok) {
       throw new Error(result.messageZh ?? "无法读取文件 diff。");
@@ -4731,27 +4736,23 @@ function parseUnifiedDiff(output: string): DiffLine[] {
   const lines: DiffLine[] = [];
   let oldLineNumber = 0;
   let newLineNumber = 0;
+  let inHunk = false;
 
   for (const line of output.split(/\r?\n/)) {
+    if (line.startsWith("diff --git")) {
+      inHunk = false;
+      continue;
+    }
+
     const hunk = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
     if (hunk) {
       oldLineNumber = Number(hunk[1]);
       newLineNumber = Number(hunk[2]);
+      inHunk = true;
       continue;
     }
 
-    if (
-      line.startsWith("diff --git") ||
-      line.startsWith("index ") ||
-      line.startsWith("--- ") ||
-      line.startsWith("+++ ") ||
-      line.startsWith("new file mode") ||
-      line.startsWith("deleted file mode") ||
-      line.startsWith("similarity index") ||
-      line.startsWith("rename from") ||
-      line.startsWith("rename to") ||
-      line.startsWith("\\ No newline")
-    ) {
+    if (!inHunk || line.startsWith("\\ No newline")) {
       continue;
     }
 

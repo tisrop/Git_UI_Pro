@@ -1115,7 +1115,7 @@ input[type="radio"]:focus-visible {
 }
 
 .source-control-pane .graph-commit-file-tree {
-  gap: 2px;
+  gap: 0;
 }
 
 .source-control-pane .graph-commit-file-row {

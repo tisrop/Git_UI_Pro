@@ -36,6 +36,34 @@ function assertSuccess(result) {
   assert.equal(result.ok, true, result.messageZh ?? result.stderr);
 }
 
+test("file diffs include whole-file context and preserve patch-like source lines", async () => {
+  const repositoryPath = await createRepository("full-file-diff");
+  const service = new GitService();
+  const filePath = path.join(repositoryPath, "tracked.txt");
+  const originalLines = Array.from({ length: 15 }, (_, index) => `line ${index + 1}`);
+  await writeFile(filePath, `${originalLines.join("\n")}\n`, "utf8");
+  git(repositoryPath, "add", "tracked.txt");
+  git(repositoryPath, "commit", "-m", "full diff baseline");
+
+  const currentLines = [...originalLines];
+  currentLines[7] = "++ changed marker";
+  await writeFile(filePath, `${currentLines.join("\n")}\n`, "utf8");
+
+  const worktreeDiff = await service.getWorktreeDiff(repositoryPath, "tracked.txt", false);
+  assert.equal(worktreeDiff[0].content, "line 1");
+  assert.equal(worktreeDiff.at(-1).content, "line 15");
+  assert.equal(worktreeDiff.filter((line) => line.type === "context").length, 14);
+  assert.equal(worktreeDiff.find((line) => line.type === "add")?.content, "++ changed marker");
+
+  git(repositoryPath, "add", "tracked.txt");
+  git(repositoryPath, "commit", "-m", "change middle line");
+  const commitHash = git(repositoryPath, "rev-parse", "HEAD");
+  const commitDiff = await service.getCommitDiff(repositoryPath, commitHash, "tracked.txt");
+  assert.equal(commitDiff[0].content, "line 1");
+  assert.equal(commitDiff.at(-1).content, "line 15");
+  assert.equal(commitDiff.find((line) => line.type === "add")?.content, "++ changed marker");
+});
+
 test("long Git operations expose an explicit cancelling state and reject unknown task ids", () => {
   const service = new GitService();
   const progress = [];

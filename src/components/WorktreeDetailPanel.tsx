@@ -370,8 +370,8 @@ export function WorktreeDetailPanel({
                   const index = diffVirtualEnabled ? diffVirtualRange.startIndex + visibleIndex : visibleIndex;
                   return (
                   <div className={`split-diff-row ${row.type}`} role="row" key={`${row.type}-${index}-${row.left?.oldLineNumber ?? ""}-${row.right?.newLineNumber ?? ""}`}>
-                    <DiffCell side="old" line={row.left} />
-                    <DiffCell side="new" line={row.right} />
+                    <DiffCell side="old" line={row.left} counterpart={row.right} highlightInlineChange={row.type === "replace"} />
+                    <DiffCell side="new" line={row.right} counterpart={row.left} highlightInlineChange={row.type === "replace"} />
                   </div>
                   );
                 })}
@@ -904,18 +904,61 @@ function isZoomOutKey(key: string): boolean {
   return key === "-" || key === "_" || key === "Subtract";
 }
 
-function DiffCell({ side, line }: { side: "old" | "new"; line?: DiffLine }) {
+function DiffCell({
+  side,
+  line,
+  counterpart,
+  highlightInlineChange
+}: {
+  side: "old" | "new";
+  line?: DiffLine;
+  counterpart?: DiffLine;
+  highlightInlineChange: boolean;
+}) {
   const lineNumber = side === "old" ? line?.oldLineNumber : line?.newLineNumber;
   const empty = !line;
+  const segments = line && counterpart && highlightInlineChange
+    ? buildInlineDiffSegments(line.content, counterpart.content)
+    : [{ text: empty ? " " : line?.content || " ", changed: false }];
 
   return (
     <div className={`split-diff-cell ${side} ${line?.type ?? "empty"}`}>
       <span className="line-number">{lineNumber ?? ""}</span>
       <span className="split-diff-code-wrap">
-        <code className="split-diff-code-text">{empty ? " " : line.content || " "}</code>
+        <code className="split-diff-code-text">
+          {segments.map((segment, index) => (
+            <span className={segment.changed ? "split-diff-inline-change" : undefined} key={`${index}-${segment.changed ? "change" : "context"}`}>
+              {segment.text}
+            </span>
+          ))}
+        </code>
       </span>
     </div>
   );
+}
+
+function buildInlineDiffSegments(value: string, counterpart: string): Array<{ text: string; changed: boolean }> {
+  let prefixLength = 0;
+  const sharedLength = Math.min(value.length, counterpart.length);
+  while (prefixLength < sharedLength && value[prefixLength] === counterpart[prefixLength]) {
+    prefixLength += 1;
+  }
+
+  let suffixLength = 0;
+  const availableSuffix = sharedLength - prefixLength;
+  while (
+    suffixLength < availableSuffix
+    && value[value.length - suffixLength - 1] === counterpart[counterpart.length - suffixLength - 1]
+  ) {
+    suffixLength += 1;
+  }
+
+  const changedEnd = value.length - suffixLength;
+  return [
+    { text: value.slice(0, prefixLength), changed: false },
+    { text: value.slice(prefixLength, changedEnd), changed: true },
+    { text: value.slice(changedEnd), changed: false }
+  ].filter((segment) => segment.text.length > 0);
 }
 
 function useSplitDiffLayout() {

@@ -13,6 +13,8 @@ import {
   Github,
   GitMerge,
   GitPullRequest,
+  Folder,
+  FolderOpen,
   MessageSquareText,
   MoreHorizontal,
   Plus,
@@ -180,7 +182,7 @@ export function GraphSidebar({
   const [blameLines, setBlameLines] = useState<GitBlameLine[]>([]);
   const [blameLoading, setBlameLoading] = useState(false);
   const [blameError, setBlameError] = useState("");
-  const [fileViewMode, setFileViewMode] = useState<GraphFileViewMode>("list");
+  const [fileViewMode, setFileViewMode] = useState<GraphFileViewMode>("tree");
   const [refsMenuOpen, setRefsMenuOpen] = useState(false);
   const [refsQuery, setRefsQuery] = useState("");
   const [refsMenuFilter, setRefsMenuFilter] = useState<GitHistoryFilter | null>(null);
@@ -1576,6 +1578,7 @@ function GraphCommitFileTreeEntry({
       >
         <span aria-hidden="true" />
         {collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+        {collapsed ? <Folder className="graph-commit-folder-icon" size={15} aria-hidden="true" /> : <FolderOpen className="graph-commit-folder-icon" size={15} aria-hidden="true" />}
         <span className="graph-commit-folder-name">{entry.name}</span>
       </button>
       {collapsed
