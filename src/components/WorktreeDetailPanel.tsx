@@ -11,6 +11,7 @@ import {
   type WheelEvent as ReactWheelEvent
 } from "react";
 import { AlertTriangle, Check, Copy, ExternalLink, FileText, FolderOpen, GitMerge, Maximize2, RefreshCw, RotateCcw, Save, X, ZoomIn, ZoomOut } from "lucide-react";
+import { DiffMinimap, type DiffMinimapLine } from "./DiffMinimap";
 import { PathTooltip } from "./PathTooltip";
 import type { ChangedFile, ConflictFileDetails, ConflictResolutionInput, DiffLine, FilePreview } from "../types/domain";
 import { absoluteFilePath } from "../utils/filePath";
@@ -83,6 +84,7 @@ export function WorktreeDetailPanel({
   const splitDiffRef = useRef<HTMLDivElement>(null);
   const splitScrollRef = useRef<HTMLDivElement>(null);
   const diffScrollFrameRef = useRef<number | undefined>();
+  const diffRevealFrameRef = useRef<number | undefined>();
   const prefersSplitDiff = useSplitDiffLayout();
   const activeDiffLines = activeTab?.diffLines ?? [];
   const mediaPreview = activeTab?.preview;
@@ -92,8 +94,20 @@ export function WorktreeDetailPanel({
   const [splitMaxScroll, setSplitMaxScroll] = useState(0);
   const [splitScrollX, setSplitScrollX] = useState(0);
   const [diffPanelHeight, setDiffPanelHeight] = useState(0);
+  const [diffScrollHeight, setDiffScrollHeight] = useState(0);
   const [diffScrollTop, setDiffScrollTop] = useState(0);
   const virtualRowCount = mediaPreview ? 0 : showSplitDiff ? splitDiffRows.length : activeDiffLines.length;
+  const firstDiffIndex = useMemo(
+    () => showSplitDiff ? splitDiffRows.findIndex((row) => row.type !== "context") : activeDiffLines.findIndex((line) => line.type !== "context"),
+    [activeDiffLines, showSplitDiff, splitDiffRows]
+  );
+  const minimapLines = useMemo<DiffMinimapLine[]>(
+    () => showSplitDiff
+      ? splitDiffRows.map((row) => ({ type: row.type }))
+      : activeDiffLines.map((line) => ({ type: line.type })),
+    [activeDiffLines, showSplitDiff, splitDiffRows]
+  );
+  const showDiffMinimap = !mediaPreview && minimapLines.some((line) => line.type !== "context");
   const diffVirtualEnabled = !diffWrap && virtualRowCount > DIFF_VIRTUAL_THRESHOLD;
   const diffVirtualRange = useMemo(() => {
     if (!diffVirtualEnabled) {
@@ -124,28 +138,61 @@ export function WorktreeDetailPanel({
       return;
     }
 
-    const measure = () => setDiffPanelHeight(panel.clientHeight);
+    const measure = () => {
+      setDiffPanelHeight(panel.clientHeight);
+      setDiffScrollHeight(panel.scrollHeight);
+    };
     measure();
 
     const resizeObserver = new ResizeObserver(measure);
     resizeObserver.observe(panel);
     return () => resizeObserver.disconnect();
-  }, [activeTab?.id]);
+  }, [activeDiffLines.length, activeTab?.id, diffWrap, showSplitDiff, splitDiffRows.length]);
 
-  useEffect(() => {
-    setDiffScrollTop(0);
+  useLayoutEffect(() => {
     setSplitScrollX(0);
-    if (diffPanelRef.current) {
-      diffPanelRef.current.scrollTop = 0;
+    const panel = diffPanelRef.current;
+    if (!panel) {
+      return;
     }
+
+    const firstRow = firstDiffIndex >= 0 ? panel.querySelector<HTMLElement>(`[data-diff-row-index="${firstDiffIndex}"]`) : null;
+    const splitHeaderHeight = showSplitDiff ? panel.querySelector<HTMLElement>(".split-diff-header")?.offsetHeight ?? 0 : 0;
+    const firstRowTop = firstRow?.offsetTop ?? splitHeaderHeight + Math.max(0, firstDiffIndex) * DIFF_ROW_HEIGHT;
+    const firstRowHeight = firstRow?.offsetHeight ?? DIFF_ROW_HEIGHT;
+    const maxScrollTop = Math.max(0, panel.scrollHeight - panel.clientHeight);
+    const nextScrollTop = firstDiffIndex >= 0
+      ? clampNumber(firstRowTop - (panel.clientHeight - firstRowHeight) / 2, 0, maxScrollTop)
+      : 0;
+
+    panel.scrollTop = nextScrollTop;
+    setDiffScrollTop(nextScrollTop);
+    setDiffPanelHeight(panel.clientHeight);
+    setDiffScrollHeight(panel.scrollHeight);
+    window.cancelAnimationFrame(diffRevealFrameRef.current ?? 0);
+    diffRevealFrameRef.current = window.requestAnimationFrame(() => {
+      const renderedFirstRow = firstDiffIndex >= 0 ? panel.querySelector<HTMLElement>(`[data-diff-row-index="${firstDiffIndex}"]`) : null;
+      if (!renderedFirstRow) {
+        return;
+      }
+      const correctedScrollTop = clampNumber(
+        renderedFirstRow.offsetTop - (panel.clientHeight - renderedFirstRow.offsetHeight) / 2,
+        0,
+        Math.max(0, panel.scrollHeight - panel.clientHeight)
+      );
+      panel.scrollTop = correctedScrollTop;
+      setDiffScrollTop(correctedScrollTop);
+      setDiffScrollHeight(panel.scrollHeight);
+    });
     if (splitScrollRef.current) {
       splitScrollRef.current.scrollLeft = 0;
     }
-  }, [activeTab?.id, showSplitDiff]);
+  }, [activeDiffLines.length, activeTab?.id, firstDiffIndex, showSplitDiff]);
 
   useEffect(
     () => () => {
       window.cancelAnimationFrame(diffScrollFrameRef.current ?? 0);
+      window.cancelAnimationFrame(diffRevealFrameRef.current ?? 0);
     },
     []
   );
@@ -197,9 +244,13 @@ export function WorktreeDetailPanel({
 
   function handleDiffPanelScroll(event: ReactUIEvent<HTMLElement>) {
     const scrollTop = event.currentTarget.scrollTop;
+    const scrollHeight = event.currentTarget.scrollHeight;
+    const panelHeight = event.currentTarget.clientHeight;
     window.cancelAnimationFrame(diffScrollFrameRef.current ?? 0);
     diffScrollFrameRef.current = window.requestAnimationFrame(() => {
       setDiffScrollTop(scrollTop);
+      setDiffScrollHeight(scrollHeight);
+      setDiffPanelHeight(panelHeight);
     });
   }
 
@@ -249,6 +300,7 @@ export function WorktreeDetailPanel({
 
   const { file, diffLines } = activeTab;
   const activeAbsolutePath = absoluteFilePath(repositoryPath, file.path);
+  const diffScrollContainerId = `diff-scroll-${stableDomToken(activeTab.id)}`;
 
   return (
     <aside className="detail-panel worktree-detail-panel editor-detail-panel">
@@ -359,7 +411,12 @@ export function WorktreeDetailPanel({
         ) : activeTab.conflict ? (
           <ConflictResolver tab={activeTab} onResolve={onResolveConflict} />
         ) : (
-        <section className={`diff-panel editor-diff-panel ${showSplitDiff ? "split-mode" : ""} ${diffWrap ? "wrap-lines" : ""} ${mediaPreview ? "media-mode" : ""}`} ref={diffPanelRef} onScroll={handleDiffPanelScroll}>
+        <section
+          id={diffScrollContainerId}
+          className={`diff-panel editor-diff-panel ${showSplitDiff ? "split-mode" : ""} ${diffWrap ? "wrap-lines" : ""} ${mediaPreview ? "media-mode" : ""} ${showDiffMinimap ? "has-minimap" : ""}`}
+          ref={diffPanelRef}
+          onScroll={handleDiffPanelScroll}
+        >
           {mediaPreview ? (
             <MediaPreview preview={mediaPreview} filePath={file.path} />
           ) : showSplitDiff ? (
@@ -373,7 +430,7 @@ export function WorktreeDetailPanel({
                 {visibleSplitDiffRows.map((row, visibleIndex) => {
                   const index = diffVirtualEnabled ? diffVirtualRange.startIndex + visibleIndex : visibleIndex;
                   return (
-                  <div className={`split-diff-row ${row.type}`} role="row" key={`${row.type}-${index}-${row.left?.oldLineNumber ?? ""}-${row.right?.newLineNumber ?? ""}`}>
+                  <div className={`split-diff-row ${row.type}`} role="row" data-diff-row-index={index} key={`${row.type}-${index}-${row.left?.oldLineNumber ?? ""}-${row.right?.newLineNumber ?? ""}`}>
                     <DiffCell side="old" line={row.left} counterpart={row.right} highlightInlineChange={row.type === "replace"} />
                     <DiffCell side="new" line={row.right} counterpart={row.left} highlightInlineChange={row.type === "replace"} />
                   </div>
@@ -389,7 +446,7 @@ export function WorktreeDetailPanel({
               {visibleDiffLines.map((line, visibleIndex) => {
                 const index = diffVirtualEnabled ? diffVirtualRange.startIndex + visibleIndex : visibleIndex;
                 return (
-                <div className={`diff-line ${line.type}`} key={`${line.type}-${index}`}>
+                <div className={`diff-line ${line.type}`} data-diff-row-index={index} key={`${line.type}-${index}`}>
                   <span className="line-number">{line.oldLineNumber ?? ""}</span>
                   <span className="line-number">{line.newLineNumber ?? ""}</span>
                   <code>{line.content || " "}</code>
@@ -401,6 +458,17 @@ export function WorktreeDetailPanel({
           )}
         </section>
         )}
+        {showDiffMinimap ? (
+          <DiffMinimap
+            lines={minimapLines}
+            scrollContainerRef={diffPanelRef}
+            scrollContainerId={diffScrollContainerId}
+            scrollTop={diffScrollTop}
+            scrollHeight={diffScrollHeight}
+            viewportHeight={diffPanelHeight}
+            reserveBottom={showSplitDiff && splitMaxScroll > 0}
+          />
+        ) : null}
         {showSplitDiff && splitMaxScroll > 0 ? (
           <div className="split-diff-horizontal-scroll" ref={splitScrollRef} onScroll={(event) => setSplitScrollX(event.currentTarget.scrollLeft)}>
             <div style={{ width: `calc(100% + ${splitMaxScroll}px)` }} />
