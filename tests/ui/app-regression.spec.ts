@@ -657,6 +657,27 @@ test("项目右键菜单可以快速调整分组", async ({ page }) => {
   await expect(page.getByLabel("Notifications alt+T").getByText("已更新项目分组")).toBeVisible();
 });
 
+test("提交信息草稿按项目隔离并在切回后恢复", async ({ page }) => {
+  await page.goto("/");
+  const messageInput = page.locator(".scm-commit-box textarea");
+  const gitUiProject = page.locator(".project-rail-item").filter({ hasText: "Git UI Pro" }).first();
+  const clientProject = page.locator(".project-rail-item").filter({ hasText: "Client Admin" }).first();
+
+  await expect(messageInput).toBeVisible();
+  await messageInput.fill("Git UI Pro 的提交草稿");
+
+  await clientProject.click();
+  await expect(messageInput).toHaveValue("");
+  await expect(messageInput).toHaveAttribute("placeholder", /release\/2\.4/);
+  await messageInput.fill("Client Admin 的提交草稿");
+
+  await gitUiProject.click();
+  await expect(messageInput).toHaveValue("Git UI Pro 的提交草稿");
+
+  await clientProject.click();
+  await expect(messageInput).toHaveValue("Client Admin 的提交草稿");
+});
+
 test("加载更多提交期间不重复显示加载入口", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".graph-commit-row").first()).toBeVisible();

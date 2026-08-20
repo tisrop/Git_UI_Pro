@@ -147,6 +147,7 @@ type CommitMessageDialogState = {
 };
 type CommitMessageDraftRequest = {
   id: number;
+  projectId: string;
   value: string;
 };
 
@@ -2345,6 +2346,10 @@ export function App() {
   }
 
   function restoreCommitMessageDraft(commit: CommitNode) {
+    if (!selectedProject) {
+      return;
+    }
+
     const draft = commitMessageDraft(commit);
     const value = [draft.subject, draft.body].filter(Boolean).join("\n\n");
     if (!value.trim()) {
@@ -2354,6 +2359,7 @@ export function App() {
     setChangesPanelOpen(true);
     setCommitMessageDraftRequest((current) => ({
       id: (current?.id ?? 0) + 1,
+      projectId: selectedProject.id,
       value
     }));
   }

@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, ChevronRight, GitMerge, GitPullRequest, Plus, RefreshCw, Trash2, Undo2 } from "lucide-react";
 import { PathTooltip } from "./PathTooltip";
@@ -34,6 +34,7 @@ interface WorkspaceViewProps {
 
 interface CommitMessageDraftRequest {
   id: number;
+  projectId: string;
   value: string;
 }
 
@@ -67,7 +68,7 @@ export function WorkspaceView({
   onTogglePanel
 }: WorkspaceViewProps) {
   const panelBodyId = useId();
-  const [message, setMessage] = useState("");
+  const [messageDrafts, setMessageDrafts] = useState<Record<string, string>>({});
   const [commitBusy, setCommitBusy] = useState(false);
   const [commitMenuOpen, setCommitMenuOpen] = useState(false);
   const [commitMenuPosition, setCommitMenuPosition] = useState<{ top: number; left: number } | null>(null);
@@ -78,6 +79,28 @@ export function WorkspaceView({
   const commitMenuButtonRef = useRef<HTMLButtonElement>(null);
   const commitMenuRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
+  const handledMessageDraftRequestIdRef = useRef<number>();
+  const projectId = project?.id;
+  const message = projectId ? messageDrafts[projectId] ?? "" : "";
+  const updateMessageDraft = useCallback((value: string) => {
+    if (!projectId) {
+      return;
+    }
+
+    setMessageDrafts((current) => {
+      if (value) {
+        return current[projectId] === value ? current : { ...current, [projectId]: value };
+      }
+
+      if (!Object.prototype.hasOwnProperty.call(current, projectId)) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[projectId];
+      return next;
+    });
+  }, [projectId]);
   const stagedCount = worktree.stagedFiles.length;
   const unstagedCount = worktree.unstagedFiles.length;
   const changeCount = unstagedCount + stagedCount;
@@ -108,18 +131,23 @@ export function WorkspaceView({
   }, [focusRequest]);
 
   useEffect(() => {
-    if (!messageDraftRequest) {
+    if (!messageDraftRequest || handledMessageDraftRequestIdRef.current === messageDraftRequest.id) {
       return;
     }
 
-    setMessage(messageDraftRequest.value);
+    handledMessageDraftRequestIdRef.current = messageDraftRequest.id;
+    if (messageDraftRequest.projectId !== projectId) {
+      return;
+    }
+
+    updateMessageDraft(messageDraftRequest.value);
     const frameId = window.requestAnimationFrame(() => {
       messageInputRef.current?.focus();
       messageInputRef.current?.setSelectionRange(messageDraftRequest.value.length, messageDraftRequest.value.length);
     });
 
     return () => window.cancelAnimationFrame(frameId);
-  }, [messageDraftRequest]);
+  }, [messageDraftRequest, projectId, updateMessageDraft]);
 
   useLayoutEffect(() => {
     const input = messageInputRef.current;
@@ -258,7 +286,7 @@ export function WorkspaceView({
         ...commitOptions
       });
       if (committed) {
-        setMessage("");
+        updateMessageDraft("");
         if (syncAfterCommit) {
           await onSyncChanges();
         }
@@ -289,7 +317,7 @@ export function WorkspaceView({
             <textarea
               ref={messageInputRef}
               value={message}
-              onChange={(event) => setMessage(event.target.value)}
+              onChange={(event) => updateMessageDraft(event.target.value)}
               onKeyDown={(event) => {
                 if (event.ctrlKey && event.key === "Enter") {
                   event.currentTarget.form?.requestSubmit();
