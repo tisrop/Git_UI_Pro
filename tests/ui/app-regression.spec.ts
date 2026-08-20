@@ -742,6 +742,48 @@ test("文件对比铺满详情区并高亮行内变更", async ({ page }) => {
   expect(metrics.gridHeight).toBeGreaterThanOrEqual(metrics.panelClientHeight - 16);
 });
 
+test("打开提交文件时使用圆形加载状态且不闪现空 diff 提示", async ({ page }) => {
+  await page.goto("/");
+  const firstCommit = page.locator(".graph-commit-row").first();
+  await expect(firstCommit).toBeVisible();
+  await firstCommit.click();
+
+  const changedFile = page.locator(".graph-commit-file-row").filter({ hasText: "PRD.md" });
+  await expect(changedFile).toBeVisible();
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __commitDiffPending?: boolean;
+      __finishCommitDiff?: () => void;
+    };
+    window.gitUI = {
+      getCommitFilePreview: async () => null,
+      getCommitDiff: async () => new Promise((resolve) => {
+        testWindow.__commitDiffPending = true;
+        testWindow.__finishCommitDiff = () => {
+          testWindow.__commitDiffPending = false;
+          resolve([
+            { type: "context", oldLineNumber: 1, newLineNumber: 1, content: "标题" },
+            { type: "add", newLineNumber: 2, content: "新增内容" }
+          ]);
+        };
+      }),
+      getWindowState: async () => ({ isMaximized: false, isFullScreen: false }),
+      onWindowStateChange: () => () => undefined
+    } as unknown as typeof window.gitUI;
+  });
+
+  await changedFile.click();
+  await expect.poll(() => page.evaluate(() => Boolean((window as typeof window & { __commitDiffPending?: boolean }).__commitDiffPending))).toBe(true);
+  const loadingState = page.getByRole("status", { name: "正在加载文件对比：docs/PRD.md" });
+  await expect(loadingState).toBeVisible();
+  await expect(loadingState.locator(".editor-diff-loading-spinner")).toBeVisible();
+  await expect(page.getByText("没有可显示的文本 diff。")).toBeHidden();
+
+  await page.evaluate(() => (window as typeof window & { __finishCommitDiff?: () => void }).__finishCommitDiff?.());
+  await expect(loadingState).toBeHidden();
+  await expect(page.locator(".editor-diff-panel .diff-line")).toHaveCount(2);
+});
+
 test("提交变更文件默认使用可折叠树形视图", async ({ page }) => {
   await page.goto("/");
   const firstCommit = page.locator(".graph-commit-row").first();

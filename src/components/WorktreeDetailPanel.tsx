@@ -334,9 +334,13 @@ export function WorktreeDetailPanel({
         style={splitDiffStyle}
       >
         {activeTab.loading ? (
-          <div className="editor-empty-state conflict-loading-state">
-            <GitMerge size={20} />
-            <span>正在读取冲突内容...</span>
+          <div
+            className="editor-diff-loading"
+            role="status"
+            aria-live="polite"
+            aria-label={file.status === "conflicted" ? `正在读取冲突内容：${file.path}` : `正在加载文件对比：${file.path}`}
+          >
+            <span className="editor-diff-loading-spinner" aria-hidden="true" />
           </div>
         ) : activeTab.loadError ? (
           <div className="editor-load-error" role="alert">

@@ -1323,6 +1323,21 @@ export function App() {
       return;
     }
 
+    if (tab.sourceType === "commit" && tab.commitHash) {
+      const commit = commits.find((item) => item.hash === tab.commitHash);
+      if (!commit) {
+        const message = "当前提交已不在已加载的历史记录中，请刷新图表后重试。";
+        setWorktreeTabs((current) =>
+          current.map((item) => (item.id === tab.id ? { ...item, loadError: message, loading: false } : item))
+        );
+        notifyError(message);
+        return;
+      }
+
+      await openCommitFile(commit, tab.file, tab.pinned, true);
+      return;
+    }
+
     if (tab.file.status !== "conflicted") {
       await openWorktreeFile(tab.file, tab.pinned, true);
       return;
@@ -1412,14 +1427,14 @@ export function App() {
     }
   }
 
-  async function openCommitFile(commit: CommitNode, file: ChangedFile, pinned: boolean) {
+  async function openCommitFile(commit: CommitNode, file: ChangedFile, pinned: boolean, forceReload = false) {
     if (!selectedProject) {
       return;
     }
 
     const tabId = commitFileTabId(commit.hash, file.path);
     const existingTab = worktreeTabs.find((tab) => tab.id === tabId);
-    if (existingTab && pinned) {
+    if (existingTab && pinned && !forceReload) {
       setWorktreeTabs((current) => current.map((tab) => (tab.id === tabId ? { ...tab, pinned: true } : tab)));
       setActiveWorktreeTabId(tabId);
       return;
@@ -1433,7 +1448,9 @@ export function App() {
       sourceType: "commit",
       commitHash: commit.hash,
       sourceLabel: `提交 ${commit.shortHash}`,
-      subtitle: commit.subject
+      subtitle: commit.subject,
+      loadError: undefined,
+      loading: true
     };
     setWorktreeTabs((current) => upsertWorktreeTab(current, pendingTab, pinned));
     setActiveWorktreeTabId(tabId);
@@ -1442,7 +1459,7 @@ export function App() {
       const preview = await apiClient.getCommitFilePreview(selectedProject, commit.hash, file);
       if (preview) {
         setWorktreeTabs((current) =>
-          current.map((tab) => (tab.id === tabId ? { ...tab, file, diffLines: [], preview, pinned: tab.pinned || pinned } : tab))
+          current.map((tab) => (tab.id === tabId ? { ...tab, file, diffLines: [], preview, loadError: undefined, loading: false, pinned: tab.pinned || pinned } : tab))
         );
         rememberStatus(`正在查看提交 ${commit.shortHash} 的媒体 ${file.path}`);
         return;
@@ -1450,11 +1467,15 @@ export function App() {
 
       const diffLines = await apiClient.getCommitDiff(selectedProject, commit.hash, file.path);
       setWorktreeTabs((current) =>
-        current.map((tab) => (tab.id === tabId ? { ...tab, file, diffLines, preview: null, pinned: tab.pinned || pinned } : tab))
+        current.map((tab) => (tab.id === tabId ? { ...tab, file, diffLines, preview: null, loadError: undefined, loading: false, pinned: tab.pinned || pinned } : tab))
       );
       rememberStatus(`正在查看提交 ${commit.shortHash} 的 ${file.path}`);
     } catch (error) {
-      notifyError(error instanceof Error ? error.message : "加载提交文件失败");
+      const message = errorText(error, "加载提交文件失败。");
+      setWorktreeTabs((current) =>
+        current.map((tab) => (tab.id === tabId ? { ...tab, loadError: message, loading: false } : tab))
+      );
+      notifyError(message);
     }
   }
 
