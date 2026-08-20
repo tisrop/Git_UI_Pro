@@ -122,6 +122,25 @@ export interface ReleaseHistoryItem {
   installerSize: number;
 }
 
+export interface UpdateComparisonCommit {
+  sha: string;
+  title: string;
+  url?: string;
+}
+
+export interface UpdateReleaseDetails {
+  source: UpdateSource;
+  baseVersion: string;
+  targetVersion: string;
+  publishedAt?: string;
+  releaseUrl: string;
+  compareUrl: string;
+  commits: UpdateComparisonCommit[];
+  totalCommits: number;
+  fallbackNotes: string[];
+  contentSource: "compare" | "release";
+}
+
 export interface GitUIBridge {
   runAppCommand: (command: string) => Promise<boolean>;
   openExternal: (url: string) => Promise<boolean>;
@@ -133,6 +152,7 @@ export interface GitUIBridge {
   getUpdateState: () => Promise<UpdateState>;
   setUpdateSource: (source: UpdateSource) => Promise<UpdateState>;
   listUpdateReleases: (force?: boolean) => Promise<ReleaseHistoryItem[]>;
+  getUpdateReleaseDetails: (force?: boolean) => Promise<UpdateReleaseDetails>;
   checkForUpdates: () => Promise<UpdateState>;
   prepareRollback: (version: string) => Promise<UpdateState>;
   cancelRollback: () => Promise<UpdateState>;

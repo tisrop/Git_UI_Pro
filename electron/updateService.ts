@@ -18,6 +18,14 @@ import {
   type VerifiedGiteeRelease
 } from "./giteeUpdateSource";
 import { githubReleaseUrl, normalizeReleaseNotes, updateErrorMessage } from "./updateUtils";
+import {
+  cleanReleaseNoteItems,
+  comparisonApiUrl,
+  comparisonWebUrl,
+  parseComparisonCommits,
+  selectStableReleaseRange,
+  type UpdateReleaseDetails
+} from "./updateDetails";
 import type { PortableRuntime } from "./portableRuntime";
 import {
   buildPortableGiteeReleaseHistoryCatalog,
@@ -320,6 +328,8 @@ export class UpdateService {
   private releaseHistoryFetchedAt = 0;
   private releaseHistoryRequest: Promise<UpdateReleaseCatalog> | null = null;
   private releaseHistoryGeneration = 0;
+  private releaseDetailsCache: { key: string; fetchedAt: number; value: UpdateReleaseDetails } | null = null;
+  private releaseDetailsRequest: { key: string; value: Promise<UpdateReleaseDetails> } | null = null;
   private latestReleaseRequestSeed = 0;
   private readonly supported: boolean;
   private readonly portable: boolean;
@@ -390,6 +400,8 @@ export class UpdateService {
     this.releaseHistoryCatalog = null;
     this.releaseHistoryFetchedAt = 0;
     this.releaseHistoryRequest = null;
+    this.releaseDetailsCache = null;
+    this.releaseDetailsRequest = null;
     this.portableTarget = null;
     this.rollbackTarget = null;
     this.setState({
@@ -408,6 +420,34 @@ export class UpdateService {
 
     const catalog = await this.loadReleaseHistory(force);
     return catalog.entries.map((entry) => ({ ...entry }));
+  }
+
+  async getReleaseDetails(force = false): Promise<UpdateReleaseDetails> {
+    const source = this.state.source;
+    const targetVersion = normalizeStableVersion(this.state.availableVersion ?? this.state.currentVersion);
+    if (!targetVersion) {
+      throw new Error("当前正式版本号无效，无法读取版本变更。");
+    }
+    const key = `${source}:${targetVersion}`;
+    if (!force && this.releaseDetailsCache?.key === key && Date.now() - this.releaseDetailsCache.fetchedAt < RELEASE_HISTORY_CACHE_MS) {
+      return cloneReleaseDetails(this.releaseDetailsCache.value);
+    }
+    if (this.releaseDetailsRequest?.key === key) {
+      return this.releaseDetailsRequest.value.then(cloneReleaseDetails);
+    }
+
+    const request = this.fetchReleaseDetails(source, targetVersion).then((details) => {
+      if (this.state.source === source) {
+        this.releaseDetailsCache = { key, fetchedAt: Date.now(), value: cloneReleaseDetails(details) };
+      }
+      return details;
+    }).finally(() => {
+      if (this.releaseDetailsRequest?.value === request) {
+        this.releaseDetailsRequest = null;
+      }
+    });
+    this.releaseDetailsRequest = { key, value: request };
+    return request.then(cloneReleaseDetails);
   }
 
   checkForUpdates(): Promise<UpdateState> {
@@ -1209,6 +1249,63 @@ export class UpdateService {
       : parseLatestStableGithubRelease(rawRelease);
   }
 
+  private async fetchReleaseDetails(source: UpdateSource, targetVersion: string): Promise<UpdateReleaseDetails> {
+    const isGitee = source === "gitee";
+    const rawReleases = await fetchJsonResource(this.cacheBustedUrl(isGitee ? GITEE_RELEASE_HISTORY_URL : RELEASE_HISTORY_URL), {
+      sourceLabel: `${isGitee ? "Gitee" : "GitHub"} 正式版本列表`,
+      timeoutMs: isGitee ? GITEE_REQUEST_TIMEOUT_MS : RELEASE_HISTORY_REQUEST_TIMEOUT_MS,
+      maxLength: MAX_RELEASE_HISTORY_RESPONSE_LENGTH,
+      headers: isGitee ? this.giteeHeaders() : this.githubHeaders()
+    });
+    const range = selectStableReleaseRange(rawReleases, targetVersion);
+    const compareUrl = comparisonWebUrl(source, range.baseVersion, range.targetVersion);
+    const releaseUrl = range.releaseUrl ?? (isGitee
+      ? `https://gitee.com/zjx_master/git-ui-pro/releases/tag/v${range.targetVersion}`
+      : githubReleaseUrl(range.targetVersion));
+
+    try {
+      const rawComparison = await fetchJsonResource(this.cacheBustedUrl(comparisonApiUrl(source, range.baseVersion, range.targetVersion)), {
+        sourceLabel: `${isGitee ? "Gitee" : "GitHub"} v${range.baseVersion} 到 v${range.targetVersion} 的版本变更`,
+        timeoutMs: isGitee ? GITEE_REQUEST_TIMEOUT_MS : RELEASE_HISTORY_REQUEST_TIMEOUT_MS,
+        maxLength: MAX_RELEASE_HISTORY_RESPONSE_LENGTH,
+        headers: isGitee ? this.giteeHeaders() : this.githubHeaders()
+      });
+      const comparison = parseComparisonCommits(rawComparison, source);
+      if (comparison.commits.length === 0) {
+        throw new Error(`v${range.baseVersion} 到 v${range.targetVersion} 之间没有可显示的提交记录。`);
+      }
+      return {
+        source,
+        baseVersion: range.baseVersion,
+        targetVersion: range.targetVersion,
+        publishedAt: range.publishedAt,
+        releaseUrl,
+        compareUrl,
+        commits: comparison.commits,
+        totalCommits: comparison.totalCommits,
+        fallbackNotes: [],
+        contentSource: "compare"
+      };
+    } catch (error) {
+      const fallbackNotes = cleanReleaseNoteItems(range.releaseNotes);
+      if (fallbackNotes.length === 0) {
+        throw error;
+      }
+      return {
+        source,
+        baseVersion: range.baseVersion,
+        targetVersion: range.targetVersion,
+        publishedAt: range.publishedAt,
+        releaseUrl,
+        compareUrl,
+        commits: [],
+        totalCommits: 0,
+        fallbackNotes,
+        contentSource: "release"
+      };
+    }
+  }
+
   private async fetchReleaseHistory(): Promise<UpdateReleaseCatalog> {
     const catalog = this.state.source === "gitee"
       ? await this.fetchGiteeReleaseHistory()
@@ -1397,6 +1494,14 @@ function cloneState(state: UpdateState): UpdateState {
   return {
     ...state,
     progress: state.progress ? { ...state.progress } : undefined
+  };
+}
+
+function cloneReleaseDetails(details: UpdateReleaseDetails): UpdateReleaseDetails {
+  return {
+    ...details,
+    commits: details.commits.map((commit) => ({ ...commit })),
+    fallbackNotes: [...details.fallbackNotes]
   };
 }
 

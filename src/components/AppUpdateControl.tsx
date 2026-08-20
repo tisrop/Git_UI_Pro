@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  ArrowRight,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -16,7 +17,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import packageInfo from "../../package.json";
-import type { ReleaseHistoryItem, UpdateOperation, UpdatePhase, UpdateSource, UpdateState } from "../types/electron";
+import type { ReleaseHistoryItem, UpdateOperation, UpdatePhase, UpdateReleaseDetails, UpdateSource, UpdateState } from "../types/electron";
 import { PathTooltip } from "./PathTooltip";
 
 const TARGET_PHASES = new Set<UpdatePhase>(["available", "downloading", "downloaded", "installing"]);
@@ -30,6 +31,9 @@ export function AppUpdateControl() {
   const [state, setState] = useState<UpdateState>(() => mockState ?? unsupportedUpdateState());
   const [open, setOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [releaseDetails, setReleaseDetails] = useState<UpdateReleaseDetails | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsError, setDetailsError] = useState("");
   const [historyExpanded, setHistoryExpanded] = useState(true);
   const [historyItems, setHistoryItems] = useState<ReleaseHistoryItem[]>([]);
   const [selectedHistoryVersion, setSelectedHistoryVersion] = useState("");
@@ -41,6 +45,8 @@ export function AppUpdateControl() {
   const mockTimerRef = useRef<number>();
   const detailsCloseTimerRef = useRef<number>();
   const historyRequestRef = useRef(0);
+  const detailsRequestRef = useRef(0);
+  const detailsIdentityRef = useRef("");
 
   useEffect(() => {
     if (isMock) {
@@ -153,9 +159,33 @@ export function AppUpdateControl() {
   const canChangeSource = !actionPending && state.operation !== "rollback" && !["checking", "downloading", "downloaded", "installing"].includes(state.phase);
   const detailVersion = stripVersionPrefix(hasTarget ? state.availableVersion ?? state.currentVersion : state.currentVersion);
   const detailHistoryItem = historyItems.find((item) => stripVersionPrefix(item.version) === detailVersion);
-  const detailNotes = releaseNoteItems(state.releaseNotes || detailHistoryItem?.releaseNotes);
-  const detailReleaseDate = state.releaseDate || detailHistoryItem?.publishedAt;
-  const detailReleaseUrl = state.releaseUrl || detailHistoryItem?.releaseUrl || releaseUrlFor(detailVersion, state.source);
+  const detailItems = releaseDetails?.contentSource === "compare"
+    ? releaseDetails.commits.map((commit) => commit.title)
+    : releaseDetails?.fallbackNotes ?? [];
+  const detailReleaseDate = releaseDetails?.publishedAt || state.releaseDate || detailHistoryItem?.publishedAt;
+  const detailCompareUrl = releaseDetails?.compareUrl;
+  const detailsIdentity = `${state.source}:${detailVersion}`;
+
+  useEffect(() => {
+    if (detailsIdentityRef.current === detailsIdentity) {
+      return;
+    }
+    detailsIdentityRef.current = detailsIdentity;
+    detailsRequestRef.current += 1;
+    setReleaseDetails(null);
+    setDetailsLoading(false);
+    setDetailsError("");
+  }, [detailsIdentity]);
+
+  useEffect(() => {
+    if (!open || !detailsOpen) {
+      return;
+    }
+    const loadedCurrentRange = releaseDetails?.source === state.source && releaseDetails.targetVersion === detailVersion;
+    if (!loadedCurrentRange && !detailsLoading && !detailsError) {
+      void loadReleaseDetails(false);
+    }
+  }, [open, detailsOpen, detailVersion, detailsLoading, detailsError, releaseDetails, state.source]);
 
   function closePanel() {
     setDetailsOpen(false);
@@ -179,6 +209,30 @@ export function AppUpdateControl() {
       setDetailsOpen(false);
       detailsCloseTimerRef.current = undefined;
     }, 140);
+  }
+
+  async function loadReleaseDetails(force: boolean) {
+    const requestId = ++detailsRequestRef.current;
+    setDetailsLoading(true);
+    setDetailsError("");
+    try {
+      const details = isMock
+        ? createMockReleaseDetails(detailVersion, state.source, state.releaseNotes)
+        : await requireUpdateBridgeMethod(window.gitUI?.getUpdateReleaseDetails)(force);
+      if (requestId !== detailsRequestRef.current) {
+        return;
+      }
+      setReleaseDetails(details);
+    } catch (error) {
+      if (requestId === detailsRequestRef.current) {
+        setReleaseDetails(null);
+        setDetailsError(cleanActionError(error, `无法读取 v${detailVersion} 的版本变更。`));
+      }
+    } finally {
+      if (requestId === detailsRequestRef.current) {
+        setDetailsLoading(false);
+      }
+    }
   }
 
   async function loadReleaseHistory(force: boolean) {
@@ -256,7 +310,11 @@ export function AppUpdateControl() {
 
     setActionPending(true);
     historyRequestRef.current += 1;
+    detailsRequestRef.current += 1;
     setHistoryItems([]);
+    setReleaseDetails(null);
+    setDetailsLoading(false);
+    setDetailsError("");
     setHistoryLoading(false);
     setSelectedHistoryVersion("");
     setHistoryError("");
@@ -726,40 +784,56 @@ export function AppUpdateControl() {
             >
               <div className="app-update-details-header">
                 <span className="app-update-details-icon"><FileText size={15} /></span>
-                <div>
-                  <strong>本次更新</strong>
-                  <small>{state.operation === "rollback" ? "所选回退版本" : "最新正式版本"}</small>
-                </div>
+                 <div>
+                   <strong>本次更新</strong>
+                   <small>{detailsLoading
+                     ? "正在比较正式版本"
+                     : releaseDetails?.contentSource === "compare"
+                       ? `${releaseDetails.totalCommits} 个提交`
+                       : releaseDetails?.contentSource === "release"
+                         ? "版本比较不可用，显示发布说明"
+                         : "上一正式版到当前版本"}</small>
+                 </div>
                 <span className="app-update-details-source" data-source={state.source}>
                   {state.source === "gitee" ? <Cloud size={12} /> : <Github size={12} />}
                   {state.source === "gitee" ? "Gitee" : "GitHub"}
                 </span>
-              </div>
+               </div>
 
-              <div className="app-update-details-version">
-                <strong>v{detailVersion}</strong>
-                <span>{detailReleaseDate ? formatReleaseDate(detailReleaseDate) : "发布时间待获取"}</span>
-              </div>
+               <div className="app-update-details-version">
+                 <div className="app-update-details-range">
+                   <strong>{releaseDetails ? `v${releaseDetails.baseVersion}` : "上一版本"}</strong>
+                   <ArrowRight size={14} aria-hidden="true" />
+                   <strong>v{detailVersion}</strong>
+                 </div>
+                 <span>{detailReleaseDate ? formatReleaseDate(detailReleaseDate) : "发布时间待获取"}</span>
+               </div>
 
-              <div className="app-update-details-body">
-                {state.phase === "checking" ? (
-                  <div className="app-update-details-empty"><LoaderCircle className="app-update-spin" size={15} />正在获取更新内容</div>
-                ) : detailNotes.length > 0 ? (
-                  <ol className="app-update-details-notes">
-                    {detailNotes.map((note, index) => <li key={`${index}-${note}`}>{note}</li>)}
-                  </ol>
-                ) : (
-                  <div className="app-update-details-empty">
-                    <FileText size={15} />
-                    <span>暂未获取到版本说明，可点击刷新后重试。</span>
-                  </div>
-                )}
-              </div>
+               <div className="app-update-details-body">
+                 {state.phase === "checking" || detailsLoading ? (
+                   <div className="app-update-details-empty"><LoaderCircle className="app-update-spin" size={15} />正在读取版本区间内的提交</div>
+                 ) : detailsError ? (
+                   <div className="app-update-details-empty app-update-details-error" role="alert">
+                     <AlertTriangle size={15} />
+                     <span>{detailsError}</span>
+                     <button type="button" onClick={() => void loadReleaseDetails(true)}>重试</button>
+                   </div>
+                 ) : detailItems.length > 0 ? (
+                   <ol className="app-update-details-notes">
+                     {detailItems.map((note, index) => <li key={`${index}-${note}`}>{note}</li>)}
+                   </ol>
+                 ) : (
+                   <div className="app-update-details-empty">
+                     <FileText size={15} />
+                     <span>该版本区间没有可显示的提交记录。</span>
+                   </div>
+                 )}
+               </div>
 
-              <button type="button" className="app-update-details-release" onClick={() => openRelease(detailReleaseUrl)}>
-                {state.source === "gitee" ? <Cloud size={13} /> : <Github size={13} />}
-                在 {state.source === "gitee" ? "Gitee" : "GitHub"} 查看完整发布
-              </button>
+               <button type="button" className="app-update-details-release" disabled={!detailCompareUrl} onClick={() => openRelease(detailCompareUrl)}>
+                 {state.source === "gitee" ? <Cloud size={13} /> : <Github size={13} />}
+                 在 {state.source === "gitee" ? "Gitee" : "GitHub"} 查看完整版本差异
+               </button>
             </aside>
           ) : null}
         </div>
@@ -893,6 +967,23 @@ function createMockReleaseHistory(currentVersion: string, source: UpdateSource):
   });
 }
 
+function createMockReleaseDetails(targetVersion: string, source: UpdateSource, releaseNotes: string | undefined): UpdateReleaseDetails {
+  const baseVersion = decrementPatchVersion(targetVersion);
+  const notes = releaseNoteItems(releaseNotes);
+  return {
+    source,
+    baseVersion,
+    targetVersion: stripVersionPrefix(targetVersion),
+    publishedAt: new Date().toISOString(),
+    releaseUrl: releaseUrlFor(targetVersion, source),
+    compareUrl: compareUrlFor(baseVersion, targetVersion, source),
+    commits: notes.map((title, index) => ({ sha: `mock-${index + 1}`, title })),
+    totalCommits: notes.length,
+    fallbackNotes: [],
+    contentSource: "compare"
+  };
+}
+
 function readMockUpdateState(): UpdateState | null {
   const params = new URLSearchParams(window.location.search);
   const rawPhase = params.get("mockUpdate");
@@ -944,6 +1035,19 @@ function readMockUpdateState(): UpdateState | null {
 function incrementPatchVersion(version: string): string {
   const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(stripVersionPrefix(version));
   return match ? `${match[1]}.${match[2]}.${Number(match[3]) + 1}` : version;
+}
+
+function decrementPatchVersion(version: string): string {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(stripVersionPrefix(version));
+  return match ? `${match[1]}.${match[2]}.${Math.max(0, Number(match[3]) - 1)}` : stripVersionPrefix(version);
+}
+
+function compareUrlFor(baseVersion: string, targetVersion: string, source: UpdateSource): string {
+  const baseTag = `v${stripVersionPrefix(baseVersion)}`;
+  const targetTag = `v${stripVersionPrefix(targetVersion)}`;
+  return source === "gitee"
+    ? `https://gitee.com/zjx_master/git-ui-pro/compare/${baseTag}...${targetTag}`
+    : `https://github.com/zjx150504-lgtm/Git_UI_Pro/compare/${baseTag}...${targetTag}`;
 }
 
 function storedUpdateSource(): UpdateSource {

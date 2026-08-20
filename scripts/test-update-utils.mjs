@@ -9,6 +9,7 @@ import giteeUpdateSource from "../dist-electron/giteeUpdateSource.js";
 import releaseHistory from "../dist-electron/releaseHistory.js";
 import updateService from "../dist-electron/updateService.js";
 import updateUtils from "../dist-electron/updateUtils.js";
+import updateDetails from "../dist-electron/updateDetails.js";
 import portableRuntime from "../dist-electron/portableRuntime.js";
 import portableUpdate from "../dist-electron/portableUpdate.js";
 
@@ -28,6 +29,12 @@ const {
   startFreshUpgradeDownload
 } = updateService;
 const { githubReleaseUrl, normalizeReleaseNotes, updateErrorMessage } = updateUtils;
+const {
+  cleanReleaseNoteItems,
+  comparisonApiUrl,
+  parseComparisonCommits,
+  selectStableReleaseRange
+} = updateDetails;
 const {
   completePortableUpdateHealthCheck,
   resolvePortableDataPath,
@@ -257,6 +264,57 @@ test("统一字符串与多版本发布说明格式", () => {
     ]),
     "v0.1.13\n修复更新流程\n\nv0.1.12\n完善发布控制台"
   );
+});
+
+test("更新详情选择目标版本的上一正式版", () => {
+  const range = selectStableReleaseRange([
+    githubRelease("0.1.39"),
+    githubRelease("0.1.41", { body: "v0.1.41 发布说明" }),
+    githubRelease("0.1.40"),
+    githubRelease("0.2.0", { prerelease: true })
+  ], "v0.1.41");
+  assert.equal(range.baseVersion, "0.1.40");
+  assert.equal(range.targetVersion, "0.1.41");
+  assert.equal(range.releaseNotes, "v0.1.41 发布说明");
+});
+
+test("更新详情从 GitHub 与 Gitee 比较结果提取提交标题", () => {
+  const github = parseComparisonCommits({
+    total_commits: 3,
+    commits: [
+      { sha: "abc", html_url: "https://github.com/example/commit/abc", commit: { message: "feat(update): 展示版本区间\n\n详细说明" } },
+      { sha: "def", commit: { message: "fix(update): 过滤比较链接" } },
+      { sha: "release", commit: { message: "chore(release): 发布 v0.1.41" } }
+    ]
+  });
+  assert.deepEqual(github.commits.map((commit) => commit.title), [
+    "feat(update): 展示版本区间",
+    "fix(update): 过滤比较链接"
+  ]);
+  assert.equal(github.totalCommits, 2);
+
+  const gitee = parseComparisonCommits({
+    total: 2,
+    commits: [
+      { id: "456", message: "style(update): 对齐详情面板", html_url: "https://gitee.com/example/commit/456" },
+      { id: "123", message: "feat(update): 读取版本区间", html_url: "https://gitee.com/example/commit/123" }
+    ]
+  }, "gitee");
+  assert.deepEqual(gitee.commits.map((commit) => commit.title), [
+    "feat(update): 读取版本区间",
+    "style(update): 对齐详情面板"
+  ]);
+  assert.equal(gitee.totalCommits, 2);
+});
+
+test("Release 回退说明不会把 Full Changelog 比较链接当更新内容", () => {
+  assert.deepEqual(cleanReleaseNoteItems([
+    "## What's Changed",
+    "- 修复更新详情读取",
+    "**Full Changelog**: https://github.com/example/repo/compare/v0.1.40...v0.1.41",
+    "https://github.com/example/repo/compare/v0.1.40...v0.1.41"
+  ].join("\n")), ["修复更新详情读取"]);
+  assert.match(comparisonApiUrl("github", "0.1.40", "0.1.41"), /compare\/v0\.1\.40\.\.\.v0\.1\.41/);
 });
 
 test("更新错误信息使用明确默认说明并限制长度", () => {

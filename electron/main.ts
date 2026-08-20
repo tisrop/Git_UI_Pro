@@ -114,6 +114,7 @@ function registerIpc(): void {
     return nextState;
   });
   ipcMain.handle("update:listReleases", (_event, force: boolean | undefined) => updateService.getReleaseHistory(Boolean(force)));
+  ipcMain.handle("update:getReleaseDetails", (_event, force: boolean | undefined) => updateService.getReleaseDetails(Boolean(force)));
   ipcMain.handle("update:check", () => updateService.checkForUpdates());
   ipcMain.handle("update:prepareRollback", (_event, version: string) => updateService.prepareRollback(version));
   ipcMain.handle("update:cancelRollback", () => updateService.cancelRollback());

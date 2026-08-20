@@ -1985,6 +1985,18 @@ input[type="radio"]:focus-visible {
   font-weight: 740;
 }
 
+.app-update-details-range {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+}
+
+.app-update-details-range svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
 .app-update-details-version span {
   color: var(--muted);
   font-size: 10px;
@@ -2029,6 +2041,30 @@ input[type="radio"]:focus-visible {
   text-align: center;
 }
 
+.app-update-details-error {
+  flex-wrap: wrap;
+}
+
+.app-update-details-error span {
+  max-width: 230px;
+}
+
+.app-update-details-error button {
+  min-height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0 8px;
+  color: var(--text-strong);
+  background: var(--surface-hover);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.app-update-details-error button:hover {
+  border-color: color-mix(in srgb, var(--blue) 45%, var(--border));
+  color: var(--blue);
+}
+
 .app-update-details-release {
   display: inline-flex;
   gap: 6px;
@@ -2049,6 +2085,14 @@ input[type="radio"]:focus-visible {
   border-color: var(--border);
   color: var(--text-strong);
   background: var(--surface-hover);
+}
+
+.app-update-details-release:disabled {
+  opacity: 0.55;
+  border-color: transparent;
+  color: var(--muted);
+  background: transparent;
+  cursor: default;
 }
 
 @keyframes app-update-details-enter {
