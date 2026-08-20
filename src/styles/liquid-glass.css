@@ -462,32 +462,32 @@
 }
 
 .scm-commit-box {
-  margin: 10px;
-  padding: 8px;
-  border: 1px solid var(--glass-edge);
-  border-radius: 18px;
-  background: color-mix(in srgb, var(--glass-fill-strong) 74%, transparent);
-  box-shadow: 0 10px 28px rgba(45, 72, 94, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.54);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .scm-commit-box textarea,
 .scm-commit-message {
-  min-height: 48px;
-  padding: 11px 12px;
+  min-height: 34px;
+  padding: 6px 10px;
   border: 1px solid var(--border);
-  border-radius: 13px;
+  border-radius: 5px;
   background: color-mix(in srgb, var(--sunken) 72%, transparent);
-  box-shadow: inset 0 2px 5px rgba(40, 65, 85, 0.06);
+  box-shadow: none;
   font-family: var(--app-font);
-  font-size: 14px;
-  line-height: 1.45;
+  font-size: 13px;
+  line-height: 20px;
   color: var(--text-strong);
   resize: vertical;
 }
 
 .scm-commit-actions {
-  gap: 8px;
-  margin-top: 8px;
+  gap: 0;
+  margin-top: 5px;
 }
 
 .scm-commit-actions button,
@@ -960,40 +960,56 @@ input[type="radio"]:focus-visible {
 
 /* Final component-specific overrides for selectors scoped in app.css. */
 
+.source-control-pane .scm-panel-body {
+  padding-top: 2px;
+}
+
+.app-shell.density-compact .source-control-pane .scm-commit-box {
+  padding-block: 0;
+}
+
 .source-control-pane .scm-commit-box textarea {
-  height: 42px;
-  min-height: 42px;
-  padding: 9px 11px;
+  height: 34px;
+  min-height: 34px;
+  padding: 6px 10px;
   border: 1px solid var(--border);
-  border-radius: 13px;
+  border-radius: 5px;
   background: color-mix(in srgb, var(--sunken) 72%, transparent);
-  font-size: 14px;
-  line-height: 22px;
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .source-control-pane .scm-commit-box textarea::placeholder {
-  font-size: 14px;
-  line-height: 22px;
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .source-control-pane .scm-commit-actions {
-  min-height: 40px;
-  border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--glass-edge));
-  border-radius: 13px;
+  min-height: 34px;
+  border: 1px solid color-mix(in srgb, var(--accent) 66%, var(--border-strong));
+  border-radius: 5px;
   background: var(--accent);
-  box-shadow: 0 8px 18px color-mix(in srgb, var(--accent) 22%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.26);
+  box-shadow: none;
 }
 
 .source-control-pane .scm-commit-button,
 .source-control-pane .scm-commit-menu {
-  min-height: 40px;
+  min-height: 32px;
+  border: 0;
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--accent-contrast);
+  box-shadow: none;
 }
 
 .source-control-pane .scm-commit-menu {
-  width: 40px;
+  width: 30px;
+}
+
+.source-control-pane .scm-commit-button svg,
+.source-control-pane .scm-commit-menu svg {
+  width: 16px;
+  height: 16px;
 }
 
 .detail-stack > .console-panel {
