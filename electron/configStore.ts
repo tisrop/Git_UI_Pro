@@ -703,7 +703,7 @@ function normalizeUiPreferences(preferences: Partial<UiPreferences>): UiPreferen
     language: "zh-CN",
     bottomConsoleVisible: Boolean(merged.bottomConsoleVisible),
     sidebarWidth: Number.isFinite(sidebarWidth) ? Math.min(420, Math.max(180, sidebarWidth)) : defaultConfig.ui.sidebarWidth,
-    rightPanelWidth: Number.isFinite(rightPanelWidth) ? Math.min(720, Math.max(280, rightPanelWidth)) : defaultConfig.ui.rightPanelWidth,
+    rightPanelWidth: Number.isFinite(rightPanelWidth) ? Math.min(720, Math.max(400, rightPanelWidth)) : defaultConfig.ui.rightPanelWidth,
     consoleHeight: Number.isFinite(consoleHeight) ? Math.min(720, Math.max(80, consoleHeight)) : defaultConfig.ui.consoleHeight,
     fontSize: Number.isFinite(fontSize) ? Math.min(20, Math.max(11, fontSize)) : defaultConfig.ui.fontSize,
     fontFamily: typeof merged.fontFamily === "string" && merged.fontFamily.trim() ? merged.fontFamily.trim() : defaultConfig.ui.fontFamily,

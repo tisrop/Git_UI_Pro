@@ -2010,7 +2010,7 @@ function PreferencesWorkspace({ data, actions, pendingAction, runAction, reload 
             <legend>面板尺寸</legend>
             <div className="repository-center-inline-settings">
               <label className="repository-center-field"><span>项目栏宽度</span><input type="number" min={180} max={340} value={preferences.sidebarWidth} onChange={(event) => setPreferences((value) => ({ ...value, sidebarWidth: Number(event.target.value) }))} /></label>
-              <label className="repository-center-field"><span>变更区宽度</span><input type="number" min={280} max={720} value={preferences.rightPanelWidth} onChange={(event) => setPreferences((value) => ({ ...value, rightPanelWidth: Number(event.target.value) }))} /></label>
+              <label className="repository-center-field"><span>变更区宽度</span><input type="number" min={400} max={720} value={preferences.rightPanelWidth} onChange={(event) => setPreferences((value) => ({ ...value, rightPanelWidth: Number(event.target.value) }))} /></label>
               <label className="repository-center-field"><span>控制台高度</span><input type="number" min={80} max={720} value={preferences.consoleHeight} onChange={(event) => setPreferences((value) => ({ ...value, consoleHeight: Number(event.target.value) }))} /></label>
             </div>
           </fieldset>

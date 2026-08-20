@@ -66,6 +66,8 @@ const cloneGraphHistoryFilter = (filter: GitHistoryFilter): GitHistoryFilter =>
 
 const DEFAULT_SOURCE_PANE_HEIGHT = 320;
 const DEFAULT_CONSOLE_HEIGHT = 240;
+const MIN_SOURCE_CONTROL_WIDTH = 400;
+const MAX_SOURCE_CONTROL_WIDTH = 720;
 const MIN_CONSOLE_HEIGHT = 80;
 const CONSOLE_TOP_SNAP_DISTANCE = 36;
 const SELECTED_PROJECT_REFRESH_INTERVAL_MS = 8000;
@@ -170,7 +172,7 @@ export function App() {
   const [themeMode, setThemeModeState] = useState<ThemeMode>(() => readThemeMode());
   const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">(() => resolveTheme(readThemeMode()));
   const [sidebarWidth, setSidebarWidth] = useState(240);
-  const [detailWidth, setDetailWidth] = useState(360);
+  const [detailWidth, setDetailWidth] = useState(defaultUiPreferences().rightPanelWidth);
   const [leftCollapsed, setLeftCollapsed] = useState(() => window.innerWidth <= 700);
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
@@ -1221,10 +1223,14 @@ export function App() {
   }
 
   function applyUiPreferences(preferences: UiPreferences) {
-    setUiPreferences(preferences);
+    const rightPanelWidth = clamp(preferences.rightPanelWidth, MIN_SOURCE_CONTROL_WIDTH, MAX_SOURCE_CONTROL_WIDTH);
+    const normalizedPreferences = rightPanelWidth === preferences.rightPanelWidth
+      ? preferences
+      : { ...preferences, rightPanelWidth };
+    setUiPreferences(normalizedPreferences);
     applyThemeMode(preferences.theme);
     setSidebarWidth(preferences.sidebarWidth);
-    setDetailWidth(preferences.rightPanelWidth);
+    setDetailWidth(rightPanelWidth);
     setConsoleHeight(preferences.consoleHeight);
     setConsoleOpen(preferences.bottomConsoleVisible);
     restoreConsoleHeightRef.current = preferences.consoleHeight;
@@ -2783,7 +2789,7 @@ export function App() {
       }
 
       if (target === "detail") {
-        finalDetailWidth = clamp(startDetailWidth + moveEvent.clientX - startX, 280, 720);
+        finalDetailWidth = clamp(startDetailWidth + moveEvent.clientX - startX, MIN_SOURCE_CONTROL_WIDTH, MAX_SOURCE_CONTROL_WIDTH);
         setDetailWidth(finalDetailWidth);
       }
 

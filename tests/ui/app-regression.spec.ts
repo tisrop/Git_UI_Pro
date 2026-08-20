@@ -404,6 +404,52 @@ test("项目栏头部使用单行等尺寸图标且搜索可展开", async ({ pa
   await expect.poll(async () => searchControl.evaluate((element) => element.getBoundingClientRect().width)).toBeLessThanOrEqual(44);
 });
 
+test("图表工具栏拖到最小宽度仍显示全部操作", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  const toolbar = page.locator(".graph-toolbar");
+  await expect(toolbar).toBeVisible();
+
+  const divider = page.locator(".detail-resize");
+  const dividerBox = await divider.boundingBox();
+  expect(dividerBox).not.toBeNull();
+  await page.mouse.move(dividerBox!.x + dividerBox!.width / 2, dividerBox!.y + 160);
+  await page.mouse.down();
+  await page.mouse.move(dividerBox!.x - 300, dividerBox!.y + 160);
+  await page.mouse.up();
+  await expect.poll(() => page.locator(".app-shell").evaluate((element) => getComputedStyle(element).getPropertyValue("--detail-width").trim())).toBe("400px");
+  await expect.poll(() => page.locator(".source-control-pane").evaluate((element) => element.getBoundingClientRect().width)).toBeLessThanOrEqual(401);
+
+  const metrics = await page.evaluate(() => {
+    const pane = document.querySelector<HTMLElement>(".source-control-pane")!;
+    const toolbarElement = document.querySelector<HTMLElement>(".graph-toolbar")!;
+    const toolbarRect = toolbarElement.getBoundingClientRect();
+    const actions = Array.from(toolbarElement.children).filter((element) => getComputedStyle(element).display !== "none");
+    const actionRects = actions.map((element) => element.getBoundingClientRect());
+    const referenceLabel = toolbarElement.querySelector<HTMLElement>(".graph-ref-filter-button span")!;
+    return {
+      paneWidth: pane.getBoundingClientRect().width,
+      actionCount: actions.length,
+      buttonCount: toolbarElement.querySelectorAll("button").length,
+      gap: Number.parseFloat(getComputedStyle(toolbarElement).gap),
+      referenceLabelDisplay: getComputedStyle(referenceLabel).display,
+      firstActionLeft: Math.min(...actionRects.map((rect) => rect.left)),
+      lastActionRight: Math.max(...actionRects.map((rect) => rect.right)),
+      toolbarLeft: toolbarRect.left,
+      toolbarRight: toolbarRect.right
+    };
+  });
+
+  expect(metrics.paneWidth).toBeGreaterThanOrEqual(399);
+  expect(metrics.paneWidth).toBeLessThanOrEqual(401);
+  expect(metrics.actionCount).toBe(9);
+  expect(metrics.buttonCount).toBe(9);
+  expect(metrics.gap).toBeLessThanOrEqual(1);
+  expect(metrics.referenceLabelDisplay).not.toBe("none");
+  expect(metrics.firstActionLeft).toBeGreaterThanOrEqual(metrics.toolbarLeft - 1);
+  expect(metrics.lastActionRight).toBeLessThanOrEqual(metrics.toolbarRight + 1);
+});
+
 test("项目内搜索框统一使用无蓝色外圈的焦点状态", async ({ page }) => {
   await openApp(page);
 

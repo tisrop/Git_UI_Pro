@@ -905,9 +905,13 @@ export const apiClient = {
     if (window.gitUI) {
       return window.gitUI.updateUiPreferences(input);
     }
+    const rightPanelWidth = input.rightPanelWidth === undefined
+      ? browserUiPreferences.rightPanelWidth
+      : Math.min(720, Math.max(400, input.rightPanelWidth));
     browserUiPreferences = {
       ...browserUiPreferences,
       ...input,
+      rightPanelWidth,
       shortcuts: input.shortcuts ? { ...browserUiPreferences.shortcuts, ...input.shortcuts } : browserUiPreferences.shortcuts
     };
     return { ...browserUiPreferences, shortcuts: { ...browserUiPreferences.shortcuts } };
