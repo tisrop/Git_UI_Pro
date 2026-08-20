@@ -6820,12 +6820,9 @@ button {
   max-width: 136px;
 }
 
-.graph-ref-row .remote-ref-summary {
+.graph-ref-row .graph-ref-badge-label {
   flex: 0 0 auto;
-  gap: 4px;
-  min-width: 24px;
-  max-width: none;
-  padding-inline: 6px;
+  max-width: 136px;
 }
 
 .graph-ref-tooltip {
@@ -6834,29 +6831,20 @@ button {
   min-width: 0;
 }
 
-.graph-ref-row .ref-overflow-summary {
+.graph-ref-row .graph-ref-badge-icon {
   flex: 0 0 auto;
   min-width: 24px;
   max-width: none;
-  padding-inline: 6px;
-  color: var(--muted-strong);
-  background: color-mix(in srgb, var(--surface-strong) 82%, transparent);
+  padding-inline: 5px;
 }
 
-.remote-provider-icons {
+.graph-ref-badge-count {
   display: inline-flex;
-  gap: 3px;
   align-items: center;
-}
-
-.remote-provider-gitee {
-  display: inline-grid;
-  width: 10px;
-  height: 10px;
-  place-items: center;
-  font-family: Arial, sans-serif;
-  font-size: 8px;
-  font-weight: 800;
+  justify-content: center;
+  min-width: 9px;
+  font-size: 9px;
+  font-weight: 700;
   line-height: 1;
 }
 

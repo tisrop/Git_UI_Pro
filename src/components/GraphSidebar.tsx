@@ -10,7 +10,6 @@ import {
   GitBranch,
   GitBranchPlus,
   GitCommitHorizontal,
-  Github,
   GitMerge,
   GitPullRequest,
   Folder,
@@ -82,7 +81,6 @@ const graphFileLanePadding = 10;
 type GraphBranchTone = (typeof graphBranchTones)[number];
 type GraphTone = "local" | "remote" | "primary" | "secondary" | "synced" | "plain" | GraphBranchTone;
 type GraphFileViewMode = "list" | "tree";
-type RemoteHostingProvider = "github" | "gitee";
 type GraphSegment =
   | {
       type: "line";
@@ -182,7 +180,7 @@ export function GraphSidebar({
   const [blameLines, setBlameLines] = useState<GitBlameLine[]>([]);
   const [blameLoading, setBlameLoading] = useState(false);
   const [blameError, setBlameError] = useState("");
-  const [fileViewMode, setFileViewMode] = useState<GraphFileViewMode>("tree");
+  const [fileViewMode, setFileViewMode] = useState<GraphFileViewMode>("list");
   const [refsMenuOpen, setRefsMenuOpen] = useState(false);
   const [refsQuery, setRefsQuery] = useState("");
   const [refsMenuFilter, setRefsMenuFilter] = useState<GitHistoryFilter | null>(null);
@@ -211,7 +209,6 @@ export function GraphSidebar({
   const graphScrollFrameRef = useRef<number | undefined>();
   const [graphListHeight, setGraphListHeight] = useState(0);
   const [graphListScrollTop, setGraphListScrollTop] = useState(0);
-  const [remoteProviders, setRemoteProviders] = useState<Record<string, RemoteHostingProvider>>({});
   const filteredCommits = useMemo(() => {
     const keyword = commitQuery.trim().toLowerCase();
     if (!keyword) {
@@ -270,38 +267,6 @@ export function GraphSidebar({
     },
     []
   );
-
-  useEffect(() => {
-    let active = true;
-    setRemoteProviders({});
-    if (!project) {
-      return () => {
-        active = false;
-      };
-    }
-
-    void apiClient.getRemotes(project).then((remotes) => {
-      if (!active) {
-        return;
-      }
-      const nextProviders: Record<string, RemoteHostingProvider> = {};
-      for (const remote of remotes) {
-        const provider = remoteHostingProvider([...remote.fetchUrls, ...remote.pushUrls]);
-        if (provider) {
-          nextProviders[remote.name.toLowerCase()] = provider;
-        }
-      }
-      setRemoteProviders(nextProviders);
-    }).catch(() => {
-      if (active) {
-        setRemoteProviders({});
-      }
-    });
-
-    return () => {
-      active = false;
-    };
-  }, [project?.id, project?.path, project?.remote?.host, project?.remote?.username, project?.remote?.port, project?.remote?.identityFile, project?.remote?.connectionEnabled]);
 
   useEffect(() => {
     if (advancedOpen) {
@@ -973,7 +938,6 @@ export function GraphSidebar({
                   key={commit.hash}
                   commit={commit}
                   graphContext={graphContext}
-                  remoteProviders={remoteProviders}
                   graphLayout={graphLayout}
                   tone={tone}
                   selected={commit.hash === selectedHash || commit.hash === hoveredDotHash || commit.hash === expandedHash || commit.hash === commitContextMenu?.commit.hash}
@@ -1242,7 +1206,6 @@ function GraphHistoryRefsMenu({
 function GraphCommitRow({
   commit,
   graphContext,
-  remoteProviders,
   graphLayout,
   tone,
   selected,
@@ -1266,7 +1229,6 @@ function GraphCommitRow({
 }: {
   commit: CommitNode;
   graphContext: GraphBranchContext;
-  remoteProviders: Record<string, RemoteHostingProvider>;
   graphLayout: GraphRowLayout;
   tone: GraphTone;
   selected: boolean;
@@ -1289,11 +1251,8 @@ function GraphCommitRow({
   onHoverEnd: () => void;
 }) {
   const visibleRefs = visibleRefsForCommit(commit, graphContext);
-  const localRefs = visibleRefs.filter((ref) => ref.type !== "remoteBranch" && ref.type !== "tag");
-  const remoteRefs = visibleRefs.filter((ref) => ref.type === "remoteBranch");
-  const tagRefs = visibleRefs.filter((ref) => ref.type === "tag");
-  const primaryRefs = localRefs.length > 0 ? localRefs.slice(0, 1) : tagRefs.slice(0, 1);
-  const overflowRefs = localRefs.length > 0 ? [...localRefs.slice(1), ...tagRefs] : tagRefs.slice(1);
+  const primaryRef = visibleRefs[0];
+  const compactRefGroups = groupCompactGraphRefs(visibleRefs.slice(1));
   const rowStyle = {
     "--graph-row-gutter": `${graphFileGutter(graphLayout.expansionLines)}px`
   } as CSSProperties;
@@ -1329,20 +1288,12 @@ function GraphCommitRow({
           </span>
           {visibleRefs.length > 0 ? (
             <span className="graph-ref-row">
-              {primaryRefs.map((ref) => (
-                <span className={refChipClassName(ref, graphContext)} key={`${commit.hash}-${ref.type}-${ref.name}`}>
-                  {ref.type === "localBranch" ? (
-                    <GitBranch size={10} />
-                  ) : ref.type === "tag" ? (
-                    <Tag size={10} />
-                  ) : (
-                    <GitCommitHorizontal size={10} />
-                  )}
-                  <span className="ref-chip-label">{ref.name}</span>
-                </span>
+              {primaryRef ? (
+                <GraphRefBadge refs={[primaryRef]} graphContext={graphContext} showLabel key={`${commit.hash}-primary-${commitRefId(primaryRef)}`} />
+              ) : null}
+              {compactRefGroups.map((refs) => (
+                <GraphRefBadge refs={refs} graphContext={graphContext} showLabel={false} key={`${commit.hash}-compact-${graphRefGroupKey(refs[0])}`} />
               ))}
-              {remoteRefs.length > 0 ? <CompactRemoteRefs refs={remoteRefs} graphContext={graphContext} remoteProviders={remoteProviders} /> : null}
-              {overflowRefs.length > 0 ? <CompactAdditionalRefs refs={overflowRefs} /> : null}
             </span>
           ) : null}
         </span>
@@ -1849,76 +1800,79 @@ function graphHistoryFilterLabel(filter: GitHistoryFilter, refs: GitHistoryRef[]
   return `${refIds.length} 项`;
 }
 
-function CompactRemoteRefs({
+function GraphRefBadge({
   refs,
   graphContext,
-  remoteProviders
+  showLabel
 }: {
   refs: CommitRef[];
   graphContext: GraphBranchContext;
-  remoteProviders: Record<string, RemoteHostingProvider>;
+  showLabel: boolean;
 }) {
-  const providers = new Set(refs.map((ref) => remoteRefProvider(ref.name, remoteProviders)).filter((provider): provider is RemoteHostingProvider => Boolean(provider)));
-  const selected = refs.some((ref) => graphContext.visibleRefIds.has(commitRefId(ref)));
-  const tooltipContent = `远程分支：${refs.map((ref) => ref.name).join(" · ")}`;
+  const firstRef = refs[0];
+  if (!firstRef) {
+    return null;
+  }
+
+  const tooltipContent = graphRefTooltip(refs);
+  const className = `${refChipClassName(firstRef, graphContext)} ${showLabel ? "graph-ref-badge-label" : "graph-ref-badge-icon"}`;
 
   return (
     <PathTooltip content={tooltipContent} className="graph-ref-tooltip" placement="control">
-      <span
-        className={`ref-chip remoteBranch remote-ref-summary ${selected ? "selectedRef" : ""}`}
-        aria-label={tooltipContent}
-      >
-        <Cloud size={11} />
-        {providers.size > 0 ? (
-          <span className="remote-provider-icons" aria-hidden="true">
-            {providers.has("gitee") ? <span className="remote-provider-gitee">G</span> : null}
-            {providers.has("github") ? <Github size={10} /> : null}
-          </span>
-        ) : null}
+      <span className={className} aria-label={tooltipContent}>
+        {!showLabel && refs.length > 1 ? <span className="graph-ref-badge-count">{refs.length}</span> : null}
+        <GraphRefIcon refType={firstRef.type} />
+        {showLabel ? <span className="ref-chip-label">{firstRef.name}</span> : null}
       </span>
     </PathTooltip>
   );
 }
 
-function CompactAdditionalRefs({ refs }: { refs: CommitRef[] }) {
-  const branchNames = refs.filter((ref) => ref.type !== "tag").map((ref) => ref.name);
-  const tagNames = refs.filter((ref) => ref.type === "tag").map((ref) => ref.name);
-  const tooltipParts = [
-    branchNames.length > 0 ? `其他分支：${branchNames.join(" · ")}` : "",
-    tagNames.length > 0 ? `标签：${tagNames.join(" · ")}` : ""
-  ].filter(Boolean);
-
-  return (
-    <PathTooltip content={tooltipParts.join("；")} className="graph-ref-tooltip" placement="control">
-      <span className="ref-chip ref-overflow-summary" aria-label={tooltipParts.join("；")}>
-        +{refs.length}
-      </span>
-    </PathTooltip>
-  );
+function GraphRefIcon({ refType }: { refType: CommitRef["type"] }) {
+  switch (refType) {
+    case "localBranch":
+      return <GitBranch size={10} />;
+    case "remoteBranch":
+      return <Cloud size={10} />;
+    case "tag":
+      return <Tag size={10} />;
+    case "head":
+      return <GitCommitHorizontal size={10} />;
+  }
 }
 
-function remoteRefProvider(refName: string, remoteProviders: Record<string, RemoteHostingProvider>): RemoteHostingProvider | undefined {
-  const remoteName = refName.split("/", 1)[0]?.toLowerCase() ?? "";
-  if (remoteProviders[remoteName]) {
-    return remoteProviders[remoteName];
+function groupCompactGraphRefs(refs: CommitRef[]): CommitRef[][] {
+  const groups = new Map<string, CommitRef[]>();
+  for (const ref of refs) {
+    const key = graphRefGroupKey(ref);
+    const group = groups.get(key);
+    if (group) {
+      group.push(ref);
+    } else {
+      groups.set(key, [ref]);
+    }
   }
-  if (remoteName.includes("github")) {
-    return "github";
-  }
-  if (remoteName.includes("gitee")) {
-    return "gitee";
-  }
-  return undefined;
+  return Array.from(groups.values());
 }
 
-function remoteHostingProvider(urls: string[]): RemoteHostingProvider | undefined {
-  if (urls.some((url) => url.toLowerCase().includes("github.com"))) {
-    return "github";
+function graphRefGroupKey(ref: CommitRef): string {
+  return ref.type;
+}
+
+function graphRefTooltip(refs: CommitRef[]): string {
+  const names = refs.map((ref) => ref.name).join(" · ");
+  switch (refs[0]?.type) {
+    case "localBranch":
+      return `本地分支：${names}`;
+    case "remoteBranch":
+      return `远程分支：${names}`;
+    case "tag":
+      return `标签：${names}`;
+    case "head":
+      return `HEAD：${names}`;
+    default:
+      return names;
   }
-  if (urls.some((url) => url.toLowerCase().includes("gitee.com"))) {
-    return "gitee";
-  }
-  return undefined;
 }
 
 function hasAdvancedQuery(query: Pick<GitHistoryQuery, "search" | "author" | "after" | "before" | "path">): boolean {
