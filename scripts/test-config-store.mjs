@@ -100,6 +100,15 @@ test("项目分组、最近项目和界面偏好保持一致", async () => {
   });
 });
 
+test("更新源默认使用 GitHub 并可持久切换到 Gitee", async () => {
+  await withTemporaryStore(async (store, directory) => {
+    assert.equal(await store.getUpdateSource(), "github");
+    assert.equal(await store.setUpdateSource("gitee"), "gitee");
+    assert.equal(await new ConfigStore(directory).getUpdateSource(), "gitee");
+    await assert.rejects(store.setUpdateSource("mirror"), /GitHub 或 Gitee/);
+  });
+});
+
 test("远程连接开关默认开启、持久化并在重复添加时保留", async () => {
   await withTemporaryStore(async (store, directory) => {
     const remoteInput = { host: "offline.example.com", username: "deploy", repositoryPath: "/srv/repo" };

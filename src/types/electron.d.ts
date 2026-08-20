@@ -84,6 +84,7 @@ export type UpdatePhase =
   | "error";
 
 export type UpdateOperation = "upgrade" | "rollback";
+export type UpdateSource = "github" | "gitee";
 
 export interface UpdateProgress {
   percent: number;
@@ -98,6 +99,7 @@ export interface UpdateProgress {
 
 export interface UpdateState {
   revision: number;
+  source: UpdateSource;
   phase: UpdatePhase;
   operation: UpdateOperation;
   currentVersion: string;
@@ -129,6 +131,7 @@ export interface GitUIBridge {
   getWindowState: () => Promise<WindowState>;
   onWindowStateChange: (callback: (state: WindowState) => void) => () => void;
   getUpdateState: () => Promise<UpdateState>;
+  setUpdateSource: (source: UpdateSource) => Promise<UpdateState>;
   listUpdateReleases: (force?: boolean) => Promise<ReleaseHistoryItem[]>;
   checkForUpdates: () => Promise<UpdateState>;
   prepareRollback: (version: string) => Promise<UpdateState>;

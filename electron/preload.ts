@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type { GitLongOperationProgress, GitPullStrategy, RepositoryTarget } from "./gitService";
 import type { ReleaseHistoryItem } from "./releaseHistory";
-import type { UpdateState } from "./updateService";
+import type { UpdateSource, UpdateState } from "./updateService";
 import type { TerminalHistoryEntry } from "./configStore";
 
 type WindowState = {
@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld("gitUI", {
     return () => ipcRenderer.removeListener("window:state", listener);
   },
   getUpdateState: (): Promise<UpdateState> => ipcRenderer.invoke("update:getState"),
+  setUpdateSource: (source: UpdateSource): Promise<UpdateState> => ipcRenderer.invoke("update:setSource", source),
   listUpdateReleases: (force = false): Promise<ReleaseHistoryItem[]> => ipcRenderer.invoke("update:listReleases", force),
   checkForUpdates: (): Promise<UpdateState> => ipcRenderer.invoke("update:check"),
   prepareRollback: (version: string): Promise<UpdateState> => ipcRenderer.invoke("update:prepareRollback", version),

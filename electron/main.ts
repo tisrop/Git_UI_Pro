@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import * as pty from "@homebridge/node-pty-prebuilt-multiarch";
-import { ConfigStore, type RemoteProjectInput, type UiPreferences } from "./configStore";
+import { ConfigStore, type RemoteProjectInput, type UiPreferences, type UpdateSource } from "./configStore";
 import { buildSshArgs, GitService, normalizeRepositoryTarget, shellQuote, sshDestination, type ChangedFile, type GitIdentityUpdate, type GitLongOperationContext, type GitLongOperationKind, type GitPullStrategy, type RepositoryLocation } from "./gitService";
 import { HostingService, type HostingCreateChangeInput, type HostingMergeInput, type HostingProvider, type HostingReviewInput } from "./hostingService";
 import { inspectSshHost, trustScannedSshHost, type ScannedSshHost } from "./sshHostTrust";
@@ -108,6 +108,11 @@ function registerIpc(): void {
 
   ipcMain.handle("window:getState", () => getWindowState());
   ipcMain.handle("update:getState", () => updateService.getState());
+  ipcMain.handle("update:setSource", async (_event, source: UpdateSource) => {
+    const nextState = updateService.setUpdateSource(source);
+    await configStore.setUpdateSource(source);
+    return nextState;
+  });
   ipcMain.handle("update:listReleases", (_event, force: boolean | undefined) => updateService.getReleaseHistory(Boolean(force)));
   ipcMain.handle("update:check", () => updateService.checkForUpdates());
   ipcMain.handle("update:prepareRollback", (_event, version: string) => updateService.prepareRollback(version));
@@ -665,7 +670,7 @@ if (!hasSingleInstanceLock) {
       app.exit(0);
       return;
     }
-    updateService = new UpdateService(emitUpdateState, portableRuntime);
+    updateService = new UpdateService(emitUpdateState, portableRuntime, await configStore.getUpdateSource());
     configureApplicationMenu();
     registerIpc();
     await createWindow();

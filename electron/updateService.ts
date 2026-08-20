@@ -33,7 +33,6 @@ import {
   portablePrimaryDownloadSource,
   selectPortableGiteeHistoryCandidates,
   verifyPortableGiteeRelease,
-  withPortableFallbackSource,
   type PortableGiteeReleaseSummary,
   type PortableUpdateTarget
 } from "./portableUpdate";
@@ -67,6 +66,7 @@ export type UpdatePhase =
   | "error";
 
 export type UpdateOperation = "upgrade" | "rollback";
+export type UpdateSource = "github" | "gitee";
 
 export type UpdateProgress = {
   percent: number;
@@ -81,6 +81,7 @@ export type UpdateProgress = {
 
 export type UpdateState = {
   revision: number;
+  source: UpdateSource;
   phase: UpdatePhase;
   operation: UpdateOperation;
   currentVersion: string;
@@ -93,7 +94,7 @@ export type UpdateState = {
   error?: string;
 };
 
-type UpdateStateInput = Omit<UpdateState, "revision"> & { revision?: number };
+type UpdateStateInput = Omit<UpdateState, "revision" | "source"> & { revision?: number; source?: UpdateSource };
 
 type UpgradeDownloadUpdater = {
   checkForUpdates: () => Promise<UpdateCheckResult | null>;
@@ -318,6 +319,7 @@ export class UpdateService {
   private releaseHistoryCatalog: UpdateReleaseCatalog | null = null;
   private releaseHistoryFetchedAt = 0;
   private releaseHistoryRequest: Promise<UpdateReleaseCatalog> | null = null;
+  private releaseHistoryGeneration = 0;
   private latestReleaseRequestSeed = 0;
   private readonly supported: boolean;
   private readonly portable: boolean;
@@ -329,12 +331,14 @@ export class UpdateService {
       executablePath: null,
       dataPath: null,
       usedFallbackDataPath: false
-    })
+    }),
+    updateSource: UpdateSource = "github"
   ) {
     this.portable = portableRuntime.isPortable;
     this.supported = process.platform === "win32" && app.isPackaged;
     this.state = {
       revision: 0,
+      source: requireUpdateSource(updateSource),
       phase: this.supported ? "idle" : "unsupported",
       operation: "upgrade",
       currentVersion: app.getVersion()
@@ -369,6 +373,32 @@ export class UpdateService {
 
   getState(): UpdateState {
     return cloneState(this.state);
+  }
+
+  setUpdateSource(source: UpdateSource): UpdateState {
+    const nextSource = requireUpdateSource(source);
+    if (nextSource === this.state.source) {
+      return this.getState();
+    }
+    if (this.state.operation === "rollback" || ["checking", "downloading", "downloaded", "installing"].includes(this.state.phase)) {
+      throw new Error("当前更新操作尚未结束，暂时不能切换更新源。");
+    }
+
+    this.disposeUpgradeUpdater();
+    this.disposePortableDownload();
+    this.releaseHistoryGeneration += 1;
+    this.releaseHistoryCatalog = null;
+    this.releaseHistoryFetchedAt = 0;
+    this.releaseHistoryRequest = null;
+    this.portableTarget = null;
+    this.rollbackTarget = null;
+    this.setState({
+      source: nextSource,
+      phase: this.supported ? "idle" : "unsupported",
+      operation: "upgrade",
+      currentVersion: this.state.currentVersion
+    });
+    return this.getState();
   }
 
   async getReleaseHistory(force = false): Promise<ReleaseHistoryItem[]> {
@@ -425,6 +455,8 @@ export class UpdateService {
             operation: "upgrade",
             currentVersion: this.state.currentVersion,
             availableVersion: latestRelease.version,
+            releaseName: target?.releaseName,
+            releaseNotes: target?.releaseNotes,
             releaseDate: target?.releaseDate,
             releaseUrl: target?.releaseUrl
           });
@@ -438,7 +470,7 @@ export class UpdateService {
     let checkUpdater: NsisUpdater | null = null;
     try {
       const latestRelease = await this.fetchLatestStableRelease();
-      const target = installerDownloadSources(requireRollbackTarget(latestRelease.target))[0].target;
+      const target = installerDownloadSources(requireRollbackTarget(latestRelease.target), this.state.source)[0].target;
       checkUpdater = this.createUpgradeUpdater(target);
       const result = await resolveFreshUpgradeCheck(checkUpdater, async () => ({ ...latestRelease, target }));
       if (result.isUpdateAvailable) {
@@ -449,6 +481,8 @@ export class UpdateService {
           operation: "upgrade",
           currentVersion: this.state.currentVersion,
           availableVersion: result.updateInfo.version,
+          releaseName: result.updateInfo.releaseName?.trim() || `Git UI Pro v${result.updateInfo.version}`,
+          releaseNotes: normalizeReleaseNotes(result.updateInfo.releaseNotes),
           releaseDate: result.updateInfo.releaseDate,
           releaseUrl: target.releaseUrl
         });
@@ -502,7 +536,7 @@ export class UpdateService {
     }
 
     this.disposeRollbackUpdater();
-    const rollbackSources = installerDownloadSources(target as RollbackTarget);
+    const rollbackSources = installerDownloadSources(target as RollbackTarget, this.state.source);
     const primaryTarget = rollbackSources[0].target;
     this.rollbackTarget = primaryTarget;
     const updater = this.createRollbackUpdater(primaryTarget);
@@ -605,7 +639,7 @@ export class UpdateService {
         this.setError(new Error("回退版本尚未通过校验，请重新选择该版本。"), "rollback");
         return this.getState();
       }
-      return this.startPortableDownload(withPortableFallbackSource(this.portableTarget), "rollback");
+      return this.startPortableDownload(this.portableTarget, "rollback");
     }
 
     if (this.state.operation === "upgrade") {
@@ -779,6 +813,8 @@ export class UpdateService {
           operation: "upgrade",
           currentVersion: this.state.currentVersion,
           availableVersion: freshDownload.info.version,
+          releaseName: freshDownload.info.releaseName?.trim() || `Git UI Pro v${freshDownload.info.version}`,
+          releaseNotes: normalizeReleaseNotes(freshDownload.info.releaseNotes),
           releaseDate: freshDownload.info.releaseDate,
           releaseUrl: source.target.releaseUrl
         });
@@ -886,8 +922,8 @@ export class UpdateService {
     try {
       this.disposeUpgradeUpdater();
       const latestRelease = await this.fetchLatestStableRelease();
-      const sources = installerDownloadSources(requireRollbackTarget(latestRelease.target));
-      await this.startUpgradeDownloadAttempt(sources[0], sources[1] ?? null, latestRelease.version);
+      const sources = installerDownloadSources(requireRollbackTarget(latestRelease.target), this.state.source);
+      await this.startUpgradeDownloadAttempt(sources[0], null, latestRelease.version);
     } catch (error) {
       this.disposeUpgradeUpdater();
       this.setError(error, "upgrade");
@@ -913,13 +949,15 @@ export class UpdateService {
           operation: "upgrade",
           currentVersion: this.state.currentVersion,
           availableVersion: latestRelease.version,
+          releaseName: target?.releaseName,
+          releaseNotes: target?.releaseNotes,
           releaseDate: target?.releaseDate,
           releaseUrl: target?.releaseUrl
         });
         return this.getState();
       }
       const target = requirePortableTarget(latestRelease.target);
-      return this.startPortableDownload(withPortableFallbackSource(target), "upgrade");
+      return this.startPortableDownload(target, "upgrade");
     } catch (error) {
       this.setError(error, "upgrade");
       return this.getState();
@@ -1091,7 +1129,14 @@ export class UpdateService {
       return this.releaseHistoryRequest;
     }
 
-    const request = this.fetchReleaseHistory().finally(() => {
+    const generation = this.releaseHistoryGeneration;
+    const request = this.fetchReleaseHistory().then((catalog) => {
+      if (generation === this.releaseHistoryGeneration) {
+        this.releaseHistoryCatalog = catalog;
+        this.releaseHistoryFetchedAt = Date.now();
+      }
+      return catalog;
+    }).finally(() => {
       if (this.releaseHistoryRequest === request) {
         this.releaseHistoryRequest = null;
       }
@@ -1101,18 +1146,9 @@ export class UpdateService {
   }
 
   private async fetchLatestStableRelease(): Promise<LatestStableRelease> {
-    try {
-      return await this.fetchLatestStableGithubRelease();
-    } catch (githubError) {
-      console.warn("GitHub 更新源不可用，尝试 Gitee 国内源", githubError);
-      try {
-        return await this.fetchLatestStableGiteeRelease();
-      } catch (giteeError) {
-        throw new Error(
-          `GitHub 更新源不可用：${errorText(githubError)}；Gitee 国内源也不可用：${errorText(giteeError)}`
-        );
-      }
-    }
+    return this.state.source === "gitee"
+      ? this.fetchLatestStableGiteeRelease()
+      : this.fetchLatestStableGithubRelease();
   }
 
   private async fetchLatestStableGiteeRelease(): Promise<LatestStableRelease> {
@@ -1174,22 +1210,13 @@ export class UpdateService {
   }
 
   private async fetchReleaseHistory(): Promise<UpdateReleaseCatalog> {
-    try {
-      const catalog = await this.fetchGithubReleaseHistory();
-      if (catalog.entries.length > 0) {
-        return this.cacheReleaseHistory(catalog);
-      }
-      throw new Error("GitHub 暂无可校验的历史版本。");
-    } catch (githubError) {
-      console.warn("GitHub 历史版本源不可用，尝试 Gitee 国内源", githubError);
-      try {
-        return this.cacheReleaseHistory(await this.fetchGiteeReleaseHistory());
-      } catch (giteeError) {
-        throw new Error(
-          `GitHub 历史版本源不可用：${errorText(githubError)}；Gitee 国内源也不可用：${errorText(giteeError)}`
-        );
-      }
+    const catalog = this.state.source === "gitee"
+      ? await this.fetchGiteeReleaseHistory()
+      : await this.fetchGithubReleaseHistory();
+    if (catalog.entries.length === 0) {
+      throw new Error(`${this.state.source === "gitee" ? "Gitee" : "GitHub"} 暂无可校验的历史版本。`);
     }
+    return catalog;
   }
 
   private async fetchGiteeReleaseHistory(): Promise<UpdateReleaseCatalog> {
@@ -1269,12 +1296,6 @@ export class UpdateService {
       : buildReleaseHistoryCatalog(rawReleases, this.state.currentVersion);
   }
 
-  private cacheReleaseHistory<T extends UpdateReleaseCatalog>(catalog: T): T {
-    this.releaseHistoryCatalog = catalog;
-    this.releaseHistoryFetchedAt = Date.now();
-    return catalog;
-  }
-
   private cacheBustedUrl(value: string): string {
     const requestUrl = new URL(value);
     requestUrl.searchParams.set("update-check", `${Date.now()}-${++this.latestReleaseRequestSeed}`);
@@ -1338,7 +1359,7 @@ export class UpdateService {
   }
 
   private setState(state: UpdateStateInput): void {
-    this.state = { ...state, revision: this.state.revision + 1 };
+    this.state = { ...state, source: state.source ?? this.state.source, revision: this.state.revision + 1 };
     this.emit();
   }
 
@@ -1405,7 +1426,7 @@ function requireRollbackTarget(value: RollbackTarget | PortableUpdateTarget | nu
   throw new Error("当前发行版缺少 Windows 安装版更新资产。");
 }
 
-function installerDownloadSources(target: RollbackTarget): readonly InstallerDownloadSource[] {
+function installerDownloadSources(target: RollbackTarget, preferredSource: UpdateSource): readonly InstallerDownloadSource[] {
   const version = normalizeStableVersion(target.version);
   if (!version) {
     throw new Error("Windows 安装版更新目标版本无效。");
@@ -1419,10 +1440,10 @@ function installerDownloadSources(target: RollbackTarget): readonly InstallerDow
     releaseDate: target.releaseDate,
     sha256: target.sha256
   };
-  return Object.freeze([
+  const sources: readonly InstallerDownloadSource[] = Object.freeze([
     Object.freeze({
       id: "github" as const,
-      label: "GitHub 优先源",
+      label: "GitHub 更新源",
       target: Object.freeze({
         ...shared,
         releaseUrl: `https://github.com/zjx150504-lgtm/Git_UI_Pro/releases/tag/${tagName}`,
@@ -1439,6 +1460,13 @@ function installerDownloadSources(target: RollbackTarget): readonly InstallerDow
       })
     })
   ]);
+  return preferredSource === "gitee" ? Object.freeze([sources[1], sources[0]]) : sources;
+}
+function requireUpdateSource(source: unknown): UpdateSource {
+  if (source === "github" || source === "gitee") {
+    return source;
+  }
+  throw new Error("更新源必须是 GitHub 或 Gitee。");
 }
 
 type JsonResourceOptions = {
@@ -1482,8 +1510,4 @@ async function fetchJsonResource(url: string, options: JsonResourceOptions): Pro
   } catch {
     throw new Error(`${options.sourceLabel}返回的数据无法解析。`);
   }
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error && error.message ? error.message : String(error);
 }

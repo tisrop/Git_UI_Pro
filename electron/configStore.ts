@@ -39,6 +39,7 @@ export interface ProjectGroup {
 
 export type DiffViewMode = "split" | "inline";
 export type GitPullStrategy = "ff-only" | "rebase" | "rebase-autostash";
+export type UpdateSource = "github" | "gitee";
 
 export interface UiPreferences {
   theme: "system" | "light" | "dark";
@@ -71,6 +72,7 @@ export interface TerminalHistoryEntry {
 
 export interface AppConfig {
   version: number;
+  updateSource: UpdateSource;
   projects: GitProject[];
   groups: ProjectGroup[];
   recentProjectIds: string[];
@@ -80,6 +82,7 @@ export interface AppConfig {
 
 const defaultConfig: AppConfig = {
   version: 1,
+  updateSource: "github",
   projects: [],
   groups: [
     { id: "work", name: "工作项目", sortOrder: 10 },
@@ -148,6 +151,20 @@ export class ConfigStore {
   async getUiPreferences(): Promise<UiPreferences> {
     const config = await this.read();
     return cloneUiPreferences(config.ui);
+  }
+
+  async getUpdateSource(): Promise<UpdateSource> {
+    const config = await this.read();
+    return config.updateSource;
+  }
+
+  async setUpdateSource(source: UpdateSource): Promise<UpdateSource> {
+    return this.enqueue(async () => {
+      const config = await this.readUnlocked();
+      config.updateSource = requireUpdateSource(source);
+      await this.writeUnlocked(config);
+      return config.updateSource;
+    });
   }
 
   async updateUiPreferences(input: Partial<UiPreferences>): Promise<UiPreferences> {
@@ -538,6 +555,7 @@ function parseConfig(raw: string): AppConfig {
   return {
     ...defaultConfig,
     ...parsed,
+    updateSource: parsed.updateSource === "gitee" ? "gitee" : "github",
     projects,
     groups: Array.isArray(parsed.groups) ? parsed.groups : defaultConfig.groups.map((group) => ({ ...group })),
     recentProjectIds: Array.isArray(parsed.recentProjectIds) ? parsed.recentProjectIds : [],
@@ -559,6 +577,13 @@ function cloneDefaultConfig(): AppConfig {
 
 function cloneTerminalHistory(entries: TerminalHistoryEntry[]): TerminalHistoryEntry[] {
   return entries.map((entry) => ({ ...entry }));
+}
+
+function requireUpdateSource(source: unknown): UpdateSource {
+  if (source === "github" || source === "gitee") {
+    return source;
+  }
+  throw new Error("更新源必须是 GitHub 或 Gitee。");
 }
 
 function normalizeTerminalHistories(value: unknown): Record<string, TerminalHistoryEntry[]> {

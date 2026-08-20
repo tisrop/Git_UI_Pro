@@ -407,11 +407,13 @@ export function withPortableFallbackSource(target: PortableUpdateTarget): Portab
     `https://gitee.com/${GITEE_RELEASE_OWNER}/${GITEE_RELEASE_REPOSITORY}/releases/download/${target.tagName}/${target.artifactName}`,
     `https://gitee.com/${GITEE_RELEASE_OWNER}/${GITEE_RELEASE_REPOSITORY}/releases/tag/${target.tagName}`
   );
+  const preferredSource = portablePrimaryDownloadSource(target).id === "gitee" ? giteeSource : githubSource;
+  const fallbackSource = preferredSource.id === "gitee" ? githubSource : giteeSource;
   return Object.freeze({
     ...target,
-    downloadUrl: githubSource.downloadUrl,
-    releaseUrl: githubSource.releaseUrl,
-    downloadSources: Object.freeze(uniquePortableDownloadSources([githubSource, giteeSource]))
+    downloadUrl: preferredSource.downloadUrl,
+    releaseUrl: preferredSource.releaseUrl,
+    downloadSources: Object.freeze(uniquePortableDownloadSources([preferredSource, fallbackSource]))
   });
 }
 

@@ -3,7 +3,9 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  Cloud,
   Download,
+  FileText,
   Github,
   History,
   LoaderCircle,
@@ -14,7 +16,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import packageInfo from "../../package.json";
-import type { ReleaseHistoryItem, UpdateOperation, UpdatePhase, UpdateState } from "../types/electron";
+import type { ReleaseHistoryItem, UpdateOperation, UpdatePhase, UpdateSource, UpdateState } from "../types/electron";
 import { PathTooltip } from "./PathTooltip";
 
 const TARGET_PHASES = new Set<UpdatePhase>(["available", "downloading", "downloaded", "installing"]);
@@ -27,6 +29,7 @@ export function AppUpdateControl() {
   const isMock = mockState !== null;
   const [state, setState] = useState<UpdateState>(() => mockState ?? unsupportedUpdateState());
   const [open, setOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [historyExpanded, setHistoryExpanded] = useState(true);
   const [historyItems, setHistoryItems] = useState<ReleaseHistoryItem[]>([]);
   const [selectedHistoryVersion, setSelectedHistoryVersion] = useState("");
@@ -36,6 +39,8 @@ export function AppUpdateControl() {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const mockTimerRef = useRef<number>();
+  const detailsCloseTimerRef = useRef<number>();
+  const historyRequestRef = useRef(0);
 
   useEffect(() => {
     if (isMock) {
@@ -98,7 +103,11 @@ export function AppUpdateControl() {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         event.preventDefault();
-        closePanel();
+        if (detailsOpen) {
+          setDetailsOpen(false);
+        } else {
+          closePanel();
+        }
       }
     }
 
@@ -109,7 +118,7 @@ export function AppUpdateControl() {
       document.removeEventListener("pointerdown", handlePointerDown, true);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [open]);
+  }, [open, detailsOpen]);
 
   useEffect(() => {
     if (open && historyExpanded && historyItems.length === 0 && !historyLoading && !historyError) {
@@ -121,6 +130,9 @@ export function AppUpdateControl() {
     () => () => {
       if (mockTimerRef.current !== undefined) {
         window.clearTimeout(mockTimerRef.current);
+      }
+      if (detailsCloseTimerRef.current !== undefined) {
+        window.clearTimeout(detailsCloseTimerRef.current);
       }
     },
     []
@@ -138,19 +150,48 @@ export function AppUpdateControl() {
     : "关于、版本与更新";
   const canCheck = !actionPending && state.operation !== "rollback" && !["checking", "downloading", "downloaded", "installing"].includes(state.phase);
   const rollbackNeedsPreparation = state.operation === "rollback" && state.phase === "error" && !state.progress;
+  const canChangeSource = !actionPending && state.operation !== "rollback" && !["checking", "downloading", "downloaded", "installing"].includes(state.phase);
+  const detailVersion = stripVersionPrefix(hasTarget ? state.availableVersion ?? state.currentVersion : state.currentVersion);
+  const detailHistoryItem = historyItems.find((item) => stripVersionPrefix(item.version) === detailVersion);
+  const detailNotes = releaseNoteItems(state.releaseNotes || detailHistoryItem?.releaseNotes);
+  const detailReleaseDate = state.releaseDate || detailHistoryItem?.publishedAt;
+  const detailReleaseUrl = state.releaseUrl || detailHistoryItem?.releaseUrl || releaseUrlFor(detailVersion, state.source);
 
   function closePanel() {
+    setDetailsOpen(false);
     setOpen(false);
     window.requestAnimationFrame(() => triggerRef.current?.focus());
   }
 
+  function showDetails() {
+    if (detailsCloseTimerRef.current !== undefined) {
+      window.clearTimeout(detailsCloseTimerRef.current);
+      detailsCloseTimerRef.current = undefined;
+    }
+    setDetailsOpen(true);
+  }
+
+  function scheduleDetailsClose() {
+    if (detailsCloseTimerRef.current !== undefined) {
+      window.clearTimeout(detailsCloseTimerRef.current);
+    }
+    detailsCloseTimerRef.current = window.setTimeout(() => {
+      setDetailsOpen(false);
+      detailsCloseTimerRef.current = undefined;
+    }, 140);
+  }
+
   async function loadReleaseHistory(force: boolean) {
+    const requestId = ++historyRequestRef.current;
     setHistoryLoading(true);
     setHistoryError("");
     try {
       const items = isMock
-        ? createMockReleaseHistory(state.currentVersion)
+        ? createMockReleaseHistory(state.currentVersion, state.source)
         : await requireUpdateBridgeMethod(window.gitUI?.listUpdateReleases)(force);
+      if (requestId !== historyRequestRef.current) {
+        return;
+      }
       setHistoryItems(items);
       setSelectedHistoryVersion((current) => {
         if (current && items.some((item) => item.version === current)) {
@@ -160,9 +201,13 @@ export function AppUpdateControl() {
         return preparedVersion && items.some((item) => item.version === preparedVersion) ? preparedVersion : "";
       });
     } catch (error) {
-      setHistoryError(cleanActionError(error, "无法读取历史版本，请稍后重试。"));
+      if (requestId === historyRequestRef.current) {
+        setHistoryError(cleanActionError(error, "无法读取历史版本，请稍后重试。"));
+      }
     } finally {
-      setHistoryLoading(false);
+      if (requestId === historyRequestRef.current) {
+        setHistoryLoading(false);
+      }
     }
   }
 
@@ -178,12 +223,13 @@ export function AppUpdateControl() {
       mockTimerRef.current = window.setTimeout(() => {
         setState((current) => ({
           revision: current.revision + 1,
+          source: current.source,
           phase: "up-to-date",
           operation: "upgrade",
           currentVersion: current.currentVersion,
           availableVersion: current.currentVersion,
           releaseDate: new Date().toISOString(),
-          releaseUrl: releaseUrlFor(current.currentVersion)
+          releaseUrl: releaseUrlFor(current.currentVersion, current.source)
         }));
         setActionPending(false);
       }, 650);
@@ -196,6 +242,53 @@ export function AppUpdateControl() {
       }
       const nextState = await window.gitUI.checkForUpdates();
       setState((current) => acceptAuthoritativeUpdateState(current, nextState));
+    } catch (error) {
+      setRecoverableError(error, "upgrade");
+    } finally {
+      setActionPending(false);
+    }
+  }
+
+  async function changeUpdateSource(source: UpdateSource) {
+    if (!canChangeSource || source === state.source) {
+      return;
+    }
+
+    setActionPending(true);
+    historyRequestRef.current += 1;
+    setHistoryItems([]);
+    setHistoryLoading(false);
+    setSelectedHistoryVersion("");
+    setHistoryError("");
+    if (isMock) {
+      window.localStorage.setItem("git-ui-pro:update-source", source);
+      setState((current) => ({
+        ...current,
+        revision: current.revision + 1,
+        source,
+        releaseUrl: releaseUrlFor(current.availableVersion ?? current.currentVersion, source),
+        progress: current.progress ? {
+          ...current.progress,
+          sourceId: source,
+          sourceLabel: source === "gitee" ? "Gitee 国内源" : "GitHub 更新源",
+          sourceReleaseUrl: releaseUrlFor(current.availableVersion ?? current.currentVersion, source)
+        } : undefined,
+        error: undefined
+      }));
+      setHistoryItems(createMockReleaseHistory(state.currentVersion, source));
+      setActionPending(false);
+      return;
+    }
+
+    try {
+      if (!window.gitUI?.setUpdateSource || !window.gitUI?.checkForUpdates) {
+        throw new Error(UPDATE_BRIDGE_UNAVAILABLE);
+      }
+      const sourceState = await window.gitUI.setUpdateSource(source);
+      setState((current) => acceptAuthoritativeUpdateState(current, sourceState));
+      const checkedState = await window.gitUI.checkForUpdates();
+      setState((current) => acceptAuthoritativeUpdateState(current, checkedState));
+      void loadReleaseHistory(true);
     } catch (error) {
       setRecoverableError(error, "upgrade");
     } finally {
@@ -217,6 +310,7 @@ export function AppUpdateControl() {
     if (isMock) {
       setState({
         revision: state.revision + 1,
+        source: state.source,
         phase: "available",
         operation: "rollback",
         currentVersion: state.currentVersion,
@@ -254,7 +348,7 @@ export function AppUpdateControl() {
         window.clearTimeout(mockTimerRef.current);
         mockTimerRef.current = undefined;
       }
-      setState({ revision: state.revision + 1, phase: "idle", operation: "upgrade", currentVersion: state.currentVersion });
+      setState({ revision: state.revision + 1, source: state.source, phase: "idle", operation: "upgrade", currentVersion: state.currentVersion });
       setSelectedHistoryVersion("");
       setActionPending(false);
       return;
@@ -379,7 +473,7 @@ export function AppUpdateControl() {
     setState((current) => ({ ...current, operation, phase: "error", error: message }));
   }
 
-  function openRelease(url = state.releaseUrl || releaseUrlFor(state.currentVersion)) {
+  function openRelease(url = state.releaseUrl || releaseUrlFor(state.currentVersion, state.source)) {
     if (isMock) {
       window.open(url, "_blank", "noopener,noreferrer");
       return;
@@ -413,17 +507,61 @@ export function AppUpdateControl() {
 
       {open ? (
         <div
-          id="app-update-popover"
           ref={panelRef}
-          className="app-update-popover"
+          className="app-update-flyout"
           role="dialog"
           aria-modal={false}
           aria-labelledby="app-update-title"
           tabIndex={-1}
         >
+          <div id="app-update-popover" className="app-update-popover">
           <div className="app-update-panel-header">
             <h2 id="app-update-title">当前版本</h2>
             <div className="app-update-header-actions">
+              <div className="app-update-header-source-actions" role="radiogroup" aria-label="选择更新源">
+                <PathTooltip content="使用 GitHub 更新源" className="app-update-action-tooltip">
+                  <button
+                    type="button"
+                    className="app-update-icon-button app-update-source-icon"
+                    role="radio"
+                    aria-label="使用 GitHub 更新源"
+                    aria-checked={state.source === "github"}
+                    disabled={!canChangeSource}
+                    onClick={() => void changeUpdateSource("github")}
+                  >
+                    <Github size={15} />
+                  </button>
+                </PathTooltip>
+                <PathTooltip content="使用 Gitee 更新源" className="app-update-action-tooltip">
+                  <button
+                    type="button"
+                    className="app-update-icon-button app-update-source-icon"
+                    role="radio"
+                    aria-label="使用 Gitee 更新源"
+                    aria-checked={state.source === "gitee"}
+                    disabled={!canChangeSource}
+                    onClick={() => void changeUpdateSource("gitee")}
+                  >
+                    <Cloud size={15} />
+                  </button>
+                </PathTooltip>
+              </div>
+              <PathTooltip content="悬停查看本次更新内容" className="app-update-action-tooltip">
+                <button
+                  type="button"
+                  className="app-update-icon-button"
+                  aria-label="查看本次更新内容"
+                  aria-expanded={detailsOpen}
+                  aria-controls="app-update-details"
+                  onPointerEnter={showDetails}
+                  onPointerLeave={scheduleDetailsClose}
+                  onFocus={showDetails}
+                  onBlur={scheduleDetailsClose}
+                  onClick={showDetails}
+                >
+                  <FileText size={15} />
+                </button>
+              </PathTooltip>
               <PathTooltip content="检查最新版本" className="app-update-action-tooltip">
                 <button type="button" className="app-update-icon-button" aria-label="检查最新版本" disabled={!canCheck} onClick={() => void checkForUpdates()}>
                   <RefreshCw className={state.phase === "checking" ? "app-update-spin" : ""} size={15} />
@@ -459,7 +597,8 @@ export function AppUpdateControl() {
                 </div>
               ) : null}
               <button type="button" className="app-update-release-link" onClick={() => openRelease()}>
-                <Github size={14} aria-hidden="true" />查看发布
+                {state.source === "gitee" ? <Cloud size={14} aria-hidden="true" /> : <Github size={14} aria-hidden="true" />}
+                查看发布
               </button>
             </section>
 
@@ -574,6 +713,56 @@ export function AppUpdateControl() {
             </div>
           ) : null}
         </div>
+
+          {detailsOpen ? (
+            <aside
+              id="app-update-details"
+              className="app-update-details-panel"
+              aria-label="本次更新内容"
+              onPointerEnter={showDetails}
+              onPointerLeave={scheduleDetailsClose}
+              onFocus={showDetails}
+              onBlur={scheduleDetailsClose}
+            >
+              <div className="app-update-details-header">
+                <span className="app-update-details-icon"><FileText size={15} /></span>
+                <div>
+                  <strong>本次更新</strong>
+                  <small>{state.operation === "rollback" ? "所选回退版本" : "最新正式版本"}</small>
+                </div>
+                <span className="app-update-details-source" data-source={state.source}>
+                  {state.source === "gitee" ? <Cloud size={12} /> : <Github size={12} />}
+                  {state.source === "gitee" ? "Gitee" : "GitHub"}
+                </span>
+              </div>
+
+              <div className="app-update-details-version">
+                <strong>v{detailVersion}</strong>
+                <span>{detailReleaseDate ? formatReleaseDate(detailReleaseDate) : "发布时间待获取"}</span>
+              </div>
+
+              <div className="app-update-details-body">
+                {state.phase === "checking" ? (
+                  <div className="app-update-details-empty"><LoaderCircle className="app-update-spin" size={15} />正在获取更新内容</div>
+                ) : detailNotes.length > 0 ? (
+                  <ol className="app-update-details-notes">
+                    {detailNotes.map((note, index) => <li key={`${index}-${note}`}>{note}</li>)}
+                  </ol>
+                ) : (
+                  <div className="app-update-details-empty">
+                    <FileText size={15} />
+                    <span>暂未获取到版本说明，可点击刷新后重试。</span>
+                  </div>
+                )}
+              </div>
+
+              <button type="button" className="app-update-details-release" onClick={() => openRelease(detailReleaseUrl)}>
+                {state.source === "gitee" ? <Cloud size={13} /> : <Github size={13} />}
+                在 {state.source === "gitee" ? "Gitee" : "GitHub"} 查看完整发布
+              </button>
+            </aside>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );
@@ -627,7 +816,7 @@ function hasTargetVersion(state: UpdateState): boolean {
 }
 
 function unsupportedUpdateState(): UpdateState {
-  return { revision: 0, phase: "unsupported", operation: "upgrade", currentVersion: CURRENT_VERSION };
+  return { revision: 0, source: storedUpdateSource(), phase: "unsupported", operation: "upgrade", currentVersion: CURRENT_VERSION };
 }
 
 function requireUpdateBridgeMethod<T>(method: T | undefined): T {
@@ -675,11 +864,14 @@ function cleanActionError(error: unknown, fallback: string): string {
   return raw.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/i, "").trim() || fallback;
 }
 
-function releaseUrlFor(version: string): string {
-  return `https://github.com/zjx150504-lgtm/Git_UI_Pro/releases/tag/v${stripVersionPrefix(version)}`;
+function releaseUrlFor(version: string, source: UpdateSource): string {
+  const tagName = `v${stripVersionPrefix(version)}`;
+  return source === "gitee"
+    ? `https://gitee.com/zjx_master/git-ui-pro/releases/tag/${tagName}`
+    : `https://github.com/zjx150504-lgtm/Git_UI_Pro/releases/tag/${tagName}`;
 }
 
-function createMockReleaseHistory(currentVersion: string): ReleaseHistoryItem[] {
+function createMockReleaseHistory(currentVersion: string, source: UpdateSource): ReleaseHistoryItem[] {
   const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(stripVersionPrefix(currentVersion));
   if (!match) {
     return [];
@@ -695,7 +887,7 @@ function createMockReleaseHistory(currentVersion: string): ReleaseHistoryItem[] 
       releaseName: `Git UI Pro v${version}`,
       releaseNotes: `1. Git UI Pro v${version} 正式版本\n2. 历史发布记录来自在线发行版`,
       publishedAt: new Date(Date.UTC(2026, 6, 23 - index * 4)).toISOString(),
-      releaseUrl: releaseUrlFor(version),
+      releaseUrl: releaseUrlFor(version, source),
       installerSize: 82_000_000 - index * 1_400_000
     };
   });
@@ -714,15 +906,18 @@ function readMockUpdateState(): UpdateState | null {
 
   const currentVersion = params.get("currentVersion")?.trim() || CURRENT_VERSION;
   const availableVersion = params.get("nextVersion")?.trim() || incrementPatchVersion(currentVersion);
+  const requestedSource = params.get("updateSource");
+  const source = requestedSource === "github" || requestedSource === "gitee" ? requestedSource : storedUpdateSource();
   const baseState: UpdateState = {
     revision: 0,
+    source,
     phase,
     operation: "upgrade",
     currentVersion,
     availableVersion: phase === "idle" || phase === "checking" ? undefined : phase === "up-to-date" ? currentVersion : availableVersion,
     releaseName: `Git UI Pro v${stripVersionPrefix(availableVersion)}`,
     releaseDate: "2026-07-31T12:00:00.000Z",
-    releaseUrl: releaseUrlFor(phase === "up-to-date" ? currentVersion : availableVersion),
+    releaseUrl: releaseUrlFor(phase === "up-to-date" ? currentVersion : availableVersion, source),
     releaseNotes: "1. 新增 Windows 正式版应用内更新入口\n2. 下载完成后可直接安装并重启软件\n3. 优化更新进度与失败重试反馈"
   };
 
@@ -749,4 +944,23 @@ function readMockUpdateState(): UpdateState | null {
 function incrementPatchVersion(version: string): string {
   const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(stripVersionPrefix(version));
   return match ? `${match[1]}.${match[2]}.${Number(match[3]) + 1}` : version;
+}
+
+function storedUpdateSource(): UpdateSource {
+  try {
+    return window.localStorage.getItem("git-ui-pro:update-source") === "gitee" ? "gitee" : "github";
+  } catch {
+    return "github";
+  }
+}
+
+function releaseNoteItems(value: string | undefined): string[] {
+  if (!value) {
+    return [];
+  }
+  return value
+    .split(/\r?\n/u)
+    .map((line) => line.trim().replace(/^#{1,6}\s+/u, "").replace(/^(?:[-*+]\s+|\d+[.)]\s*)/u, ""))
+    .filter((line) => Boolean(line) && !/^---+$/u.test(line))
+    .slice(0, 20);
 }
