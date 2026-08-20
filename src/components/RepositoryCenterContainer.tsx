@@ -528,6 +528,55 @@ export function RepositoryCenterContainer({
       ? completeGit(apiClient.startInteractiveRebase(requireProject(), target, plan ?? [], onto), OPERATION_REFRESH_SECTIONS)
       : completeGit(apiClient.startRebase(requireProject(), target, onto), OPERATION_REFRESH_SECTIONS),
     onForcePushWithLease: () => completeGit(apiClient.push(requireProject(), { forceWithLease: true }), REF_REFRESH_SECTIONS),
+    onPublishCurrentBranch: async ({ remoteId, remoteUrl }) => {
+      const selected = requireProject();
+      const currentBranch = data.branches.data.find((branch) => branch.kind === "local" && branch.current);
+      if (!currentBranch) {
+        throw new Error("当前仓库还没有可发布的分支，请先完成一次提交。");
+      }
+
+      let targetRemote = remoteId?.trim() ?? "";
+      let configurationChanged = false;
+      let operationError: unknown;
+      let feedback = "";
+      try {
+        if (remoteUrl?.trim()) {
+          if (data.remotes.data.length > 0) {
+            throw new Error("当前仓库已经配置远程地址，请从已有远程中选择发布目标。");
+          }
+          targetRemote = "origin";
+          ensureGitSuccess(await apiClient.addRemote(selected, targetRemote, remoteUrl.trim()));
+          configurationChanged = true;
+        } else {
+          requireRemote(targetRemote);
+        }
+
+        ensureGitSuccess(await apiClient.setDefaultRemote(selected, targetRemote, "push", currentBranch.name));
+        configurationChanged = true;
+        ensureGitSuccess(await apiClient.push(selected));
+        feedback = `已将 ${currentBranch.name} 发布到 ${targetRemote}，后续可直接推送。`;
+      } catch (error) {
+        operationError = error;
+      }
+
+      if (configurationChanged) {
+        const refreshResults = await Promise.allSettled([
+          onRepositoryChange(),
+          refreshSections(REMOTE_REFRESH_SECTIONS)
+        ]);
+        if (!operationError) {
+          const refreshFailure = refreshResults.find((result) => result.status === "rejected");
+          if (refreshFailure?.status === "rejected") {
+            throw new Error(`首次发布已完成，但界面刷新失败：${refreshFailure.reason instanceof Error ? refreshFailure.reason.message : String(refreshFailure.reason)}`);
+          }
+        }
+      }
+
+      if (operationError) {
+        throw operationError;
+      }
+      return feedback;
+    },
     onSaveRemote: async (input) => {
       const selected = requireProject();
       if (input.id) {

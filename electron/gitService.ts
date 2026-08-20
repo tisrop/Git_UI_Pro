@@ -547,6 +547,7 @@ function decodeGitOutput(buffer: Buffer): string {
 export class GitService {
   private readonly activeMergeRepositories = new Set<string>();
   private readonly pendingStatusRequests = new Map<string, Promise<GitStatusSummary>>();
+  private readonly pendingPorcelainStatusRequests = new Map<string, Promise<string>>();
   private readonly cleanManagedMergeRepositories = new Set<string>();
   private readonly activeLongOperations = new Map<string, {
     child: ReturnType<typeof spawn>;
@@ -808,12 +809,7 @@ export class GitService {
   }
 
   private async loadStatus(repositoryPath: RepositoryLocation): Promise<GitStatusSummary> {
-    const result = await this.run(repositoryPath, ["status", "--porcelain=v2", "--branch"]);
-    if (!result.ok) {
-      throw new Error(result.messageZh ?? "无法读取仓库状态。");
-    }
-
-    const summary = parseStatus(result.stdout);
+    const summary = parseStatus(await this.getPorcelainStatus(repositoryPath));
     summary.operationState = await this.getOperationState(repositoryPath);
     const repositoryKey = this.mergeRepositoryKey(repositoryPath);
     if (summary.operationState === "merge") {
@@ -825,6 +821,29 @@ export class GitService {
       await this.clearManagedMergeState(repositoryPath);
     }
     return summary;
+  }
+
+  private async getPorcelainStatus(repositoryPath: RepositoryLocation): Promise<string> {
+    const requestKey = this.mergeRepositoryKey(repositoryPath);
+    const pendingRequest = this.pendingPorcelainStatusRequests.get(requestKey);
+    if (pendingRequest) {
+      return pendingRequest;
+    }
+
+    const request = this.run(repositoryPath, ["status", "--porcelain=v2", "--branch"])
+      .then((result) => {
+        if (!result.ok) {
+          throw new Error(result.messageZh ?? "无法读取仓库状态。");
+        }
+        return result.stdout;
+      })
+      .finally(() => {
+        if (this.pendingPorcelainStatusRequests.get(requestKey) === request) {
+          this.pendingPorcelainStatusRequests.delete(requestKey);
+        }
+      });
+    this.pendingPorcelainStatusRequests.set(requestKey, request);
+    return request;
   }
 
   private async getOperationState(repositoryPath: RepositoryLocation): Promise<GitOperationState | undefined> {
@@ -1073,19 +1092,16 @@ export class GitService {
   }
 
   async getWorktree(repositoryPath: RepositoryLocation): Promise<WorktreeState> {
-    const [statusResult, untrackedResult] = await Promise.all([
-      this.run(repositoryPath, ["status", "--porcelain=v2"]),
+    const [statusOutput, untrackedResult] = await Promise.all([
+      this.getPorcelainStatus(repositoryPath),
       this.run(repositoryPath, ["ls-files", "--others", "--exclude-standard"])
     ]);
 
-    if (!statusResult.ok) {
-      throw new Error(statusResult.messageZh ?? "无法读取工作区状态。");
-    }
     if (!untrackedResult.ok) {
       throw new Error(untrackedResult.messageZh ?? "无法扫描未跟踪文件。");
     }
 
-    const worktree = parseWorktree(statusResult.stdout);
+    const worktree = parseWorktree(statusOutput);
     const existingPaths = new Set([...worktree.stagedFiles, ...worktree.unstagedFiles].map((file) => file.path));
     for (const filePath of untrackedResult.stdout.split(/\r?\n/).filter(Boolean)) {
       if (!existingPaths.has(filePath)) {

@@ -412,6 +412,7 @@ test("Gitee 镜像发布时先创建发行版并最后上传校验清单", async
   const portable = `Git-UI-Pro-Portable-${version}-x64.exe`;
   const uploads = [];
   const requests = [];
+  const deletedAssets = [];
   const uploadedAssets = [{ id: 99, name: installer, size: Buffer.byteLength("installer") }];
   try {
     await Promise.all([
@@ -438,8 +439,26 @@ test("Gitee 镜像发布时先创建发行版并最后上传校验清单", async
       if (url.pathname.endsWith("/releases") && options.method === "POST") {
         return Response.json({ id: 26, tag_name: tagName });
       }
+      if (url.pathname.endsWith("/releases") && (options.method ?? "GET") === "GET") {
+        return Response.json([
+          { id: 26, tag_name: tagName },
+          { id: 25, tag_name: "v0.1.25" },
+          { id: 24, tag_name: "v0.1.24" },
+          { id: 23, tag_name: "v0.1.23" }
+        ]);
+      }
       if (url.pathname.endsWith("/releases/26/attach_files") && (options.method ?? "GET") === "GET") {
         return Response.json(uploadedAssets);
+      }
+      if (url.pathname.endsWith("/releases/23/attach_files") && (options.method ?? "GET") === "GET") {
+        return Response.json([
+          { id: 230, name: "Git-UI-Pro-Setup-0.1.23-x64.exe", size: 82_000_000 },
+          { id: 231, name: "manual-notes.txt", size: 100 }
+        ]);
+      }
+      if (url.pathname.endsWith("/releases/23/attach_files/230") && options.method === "DELETE") {
+        deletedAssets.push(230);
+        return new Response(null, { status: 204 });
       }
       throw new Error(`未处理的镜像请求：${options.method ?? "GET"} ${url}`);
     };
@@ -470,11 +489,13 @@ test("Gitee 镜像发布时先创建发行版并最后上传校验清单", async
     });
 
     assert.deepEqual(uploads, [`${installer}.blockmap`, portable, "latest.yml", "update-manifest.json"]);
+    assert.deepEqual(deletedAssets, [230]);
     assert.deepEqual(result.skippedAssets, [installer]);
     assert.equal(result.releaseUrl, `https://gitee.com/zjx_master/git-ui-pro/releases/tag/${tagName}`);
     assert.equal(requests.filter((request) => request.method === "POST").length, 1);
-    assert.equal(requests.filter((request) => request.path.endsWith("/attach_files")).length, 10);
+    assert.equal(requests.filter((request) => request.path.endsWith("/attach_files")).length, 11);
     assert.equal(progressEvents.at(-1).phase, "completed");
+    assert.equal(progressEvents.some((event) => event.phase === "cleanup" && /释放 78\.2 MB/.test(event.message)), true);
     assert.equal(progressEvents.at(-1).overallUploadedBytes, progressEvents.at(-1).overallTotalBytes);
   } finally {
     await rm(directory, { recursive: true, force: true });

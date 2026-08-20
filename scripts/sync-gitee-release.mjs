@@ -13,7 +13,14 @@ const ASSET_PROBE_TIMEOUT_MS = 20_000;
 const UPLOAD_TIMEOUT_MS = 25 * 60_000;
 const UPLOAD_IDLE_TIMEOUT_MS = 2 * 60_000;
 const UPLOAD_RESPONSE_TIMEOUT_MS = 3 * 60_000;
+const DEFAULT_GITEE_RELEASE_RETENTION = 3;
 const STABLE_TAG_PATTERN = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+const MANAGED_RELEASE_ASSET_PATTERNS = Object.freeze([
+  /^Git-UI-Pro-Setup-\d+\.\d+\.\d+-x64\.exe(?:\.blockmap)?$/,
+  /^Git-UI-Pro-Portable-\d+\.\d+\.\d+-x64\.exe$/,
+  /^latest\.yml$/,
+  /^update-manifest\.json$/
+]);
 
 export function createGiteeUpdateManifest(tagName, installer, portable) {
   const version = stableVersionFromTag(tagName);
@@ -151,6 +158,19 @@ export async function syncGiteeRelease(options = {}) {
     throw new Error("Gitee Release 创建结果缺少有效编号，已停止上传更新资产。");
   }
 
+  const retainedReleaseCount = normalizeRetentionCount(options.retainedReleaseCount);
+  reportProgress(onProgress, {
+    phase: "cleanup",
+    message: `整理 Gitee 附件空间，仅保留最近 ${retainedReleaseCount} 个正式版本的下载文件`
+  });
+  const cleanup = await gitee.pruneManagedAssets({ currentTag: tagName, retainCount: retainedReleaseCount });
+  if (cleanup.deletedAssets > 0) {
+    reportProgress(onProgress, {
+      phase: "cleanup",
+      message: `已清理 ${cleanup.releases.length} 个旧版本的 ${cleanup.deletedAssets} 个附件，释放 ${formatMegabytes(cleanup.reclaimedBytes)}`
+    });
+  }
+
   const uploadNames = [...files.keys(), UPDATE_MANIFEST_NAME];
   const manifestBuffer = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   const uploadEntries = [
@@ -284,7 +304,75 @@ function createGiteeClient({ owner, repository, token, fetchImpl = fetch, upload
     return assets;
   }
 
+  async function listReleases() {
+    const releases = [];
+    for (let page = 1; page <= 20; page += 1) {
+      const url = new URL(`${baseUrl}/releases`);
+      url.searchParams.set("access_token", token);
+      url.searchParams.set("page", String(page));
+      url.searchParams.set("per_page", "100");
+      const response = await fetchWithTimeout(fetchImpl, url, {}, REQUEST_TIMEOUT_MS, signal, "读取 Gitee 发行版列表");
+      if (!response.ok) {
+        throw new Error(`读取 Gitee 发行版列表失败（HTTP ${response.status}）。`);
+      }
+      const pageReleases = await response.json();
+      if (!Array.isArray(pageReleases)) {
+        throw new Error("Gitee 发行版列表格式无效。");
+      }
+      releases.push(...pageReleases);
+      if (pageReleases.length < 100) {
+        break;
+      }
+    }
+    return releases;
+  }
+
+  async function deleteAsset(releaseId, assetId) {
+    await request(`/releases/${releaseId}/attach_files/${assetId}`, {
+      method: "DELETE",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ access_token: token })
+    });
+  }
+
   return {
+    async pruneManagedAssets({ currentTag, retainCount }) {
+      const releases = (await listReleases())
+        .filter((candidate) => Number.isSafeInteger(candidate?.id) && candidate.id > 0 && STABLE_TAG_PATTERN.test(candidate?.tag_name ?? ""))
+        .sort((left, right) => compareStableTags(right.tag_name, left.tag_name));
+      const retainedTags = new Set([currentTag]);
+      for (const candidate of releases) {
+        if (retainedTags.size >= retainCount) break;
+        retainedTags.add(candidate.tag_name);
+      }
+
+      let deletedAssets = 0;
+      let reclaimedBytes = 0;
+      const cleanedReleases = [];
+      for (const candidate of releases) {
+        throwIfAborted(signal);
+        if (retainedTags.has(candidate.tag_name)) continue;
+        const assets = await listAssets(candidate.id);
+        let releaseDeletedAssets = 0;
+        for (const asset of assets) {
+          const assetId = numericAssetId(asset?.id);
+          if (assetId === null || !isManagedReleaseAsset(asset?.name)) continue;
+          await deleteAsset(candidate.id, assetId);
+          deletedAssets += 1;
+          releaseDeletedAssets += 1;
+          reclaimedBytes += Number.isSafeInteger(Number(asset?.size)) ? Number(asset.size) : 0;
+        }
+        if (releaseDeletedAssets > 0) {
+          cleanedReleases.push(candidate.tag_name);
+        }
+      }
+      return Object.freeze({
+        deletedAssets,
+        reclaimedBytes,
+        releases: Object.freeze(cleanedReleases)
+      });
+    },
+
     async ensureRelease({ tagName, name, body, targetCommitish }) {
       const existing = await findRelease(tagName);
       const payload = {
@@ -322,11 +410,7 @@ function createGiteeClient({ owner, repository, token, fetchImpl = fetch, upload
       for (const asset of namedAssets) {
         const assetId = numericAssetId(asset?.id);
         if (assetId !== null) {
-          await request(`/releases/${releaseId}/attach_files/${assetId}`, {
-            method: "DELETE",
-            headers: { Accept: "application/json", "Content-Type": "application/json" },
-            body: JSON.stringify({ access_token: token })
-          });
+          await deleteAsset(releaseId, assetId);
         }
       }
 
@@ -653,13 +737,10 @@ async function uploadMultipartAsset({
           finish(resolve);
           return;
         }
-        finish(
-          reject,
-          new Error(
-            `上传 Gitee Release 附件 ${filename} 返回 HTTP ${response.statusCode ?? "未知"}` +
-              `${detail ? `：${detail}` : ""}`
-          )
-        );
+        const quotaExceeded = /exceeded repository attachment quota|附件(?:仓库)?配额|超出仓库附件配额/i.test(detail);
+        finish(reject, new Error(quotaExceeded
+          ? `Gitee 附件空间仍然不足。发布控制台已清理旧版本附件；若刚完成清理，请稍后重新点击“同步 / 修复”。${detail ? ` Gitee 返回：${detail}` : ""}`
+          : `上传 Gitee Release 附件 ${filename} 返回 HTTP ${response.statusCode ?? "未知"}${detail ? `：${detail}` : ""}`));
       });
     });
     const timeoutId = setTimeout(() => {
@@ -797,6 +878,32 @@ function stableVersionFromTag(tagName) {
     throw new Error(`只允许同步稳定版本标签，收到：${tagName}`);
   }
   return `${match[1]}.${match[2]}.${match[3]}`;
+}
+
+function compareStableTags(leftTag, rightTag) {
+  const left = stableVersionFromTag(leftTag).split(".").map(Number);
+  const right = stableVersionFromTag(rightTag).split(".").map(Number);
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
+      return left[index] - right[index];
+    }
+  }
+  return 0;
+}
+
+function isManagedReleaseAsset(filename) {
+  return typeof filename === "string" && MANAGED_RELEASE_ASSET_PATTERNS.some((pattern) => pattern.test(filename));
+}
+
+function normalizeRetentionCount(value) {
+  if (value === undefined || value === null || value === "") {
+    return DEFAULT_GITEE_RELEASE_RETENTION;
+  }
+  const count = Number(value);
+  if (!Number.isSafeInteger(count) || count < 1 || count > 20) {
+    throw new Error("Gitee 正式版附件保留数量必须是 1 到 20 之间的整数。");
+  }
+  return count;
 }
 
 function normalizeText(value) {
