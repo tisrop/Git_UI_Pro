@@ -3779,6 +3779,21 @@ button {
   white-space: pre;
 }
 
+.editor-diff-panel:not(.wrap-lines) .split-diff-row,
+.editor-diff-panel:not(.wrap-lines) .diff-line {
+  height: 24px;
+  min-height: 24px;
+}
+
+.editor-diff-panel:not(.wrap-lines) .split-diff-cell .line-number,
+.editor-diff-panel:not(.wrap-lines) .split-diff-cell code,
+.editor-diff-panel:not(.wrap-lines) .diff-line .line-number,
+.editor-diff-panel:not(.wrap-lines) .diff-line code {
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 24px;
+}
+
 .split-diff-inline-change {
   border-radius: 2px;
   box-decoration-break: clone;

@@ -58,6 +58,8 @@ interface SplitDiffRow {
 const DIFF_ROW_HEIGHT = 24;
 const DIFF_VIRTUAL_THRESHOLD = 500;
 const DIFF_VIRTUAL_OVERSCAN = 36;
+const MIN_SPLIT_DIFF_WIDTH = 960;
+const DIFF_MINIMAP_WIDTH = 58;
 const MEDIA_MIN_SCALE = 0.2;
 const MEDIA_MAX_SCALE = 8;
 const MEDIA_ZOOM_STEP = 1.2;
@@ -85,17 +87,22 @@ export function WorktreeDetailPanel({
   const splitScrollRef = useRef<HTMLDivElement>(null);
   const diffScrollFrameRef = useRef<number | undefined>();
   const diffRevealFrameRef = useRef<number | undefined>();
+  const splitContentWidthCacheRef = useRef<{ rows: SplitDiffRow[]; styleKey: string; width: number }>();
   const prefersSplitDiff = useSplitDiffLayout();
   const activeDiffLines = activeTab?.diffLines ?? [];
   const mediaPreview = activeTab?.preview;
+  const showDiffMinimap = !mediaPreview && activeDiffLines.some((line) => line.type !== "context");
   const splitDiffRows = useMemo(() => buildSplitDiffRows(activeDiffLines), [activeDiffLines]);
-  const splitDiffEnabled = diffViewMode ? diffViewMode === "split" : prefersSplitDiff;
-  const showSplitDiff = Boolean(!mediaPreview && splitDiffEnabled && activeTab && canUseSplitDiff(activeTab.file.status) && splitDiffRows.length > 0);
   const [splitMaxScroll, setSplitMaxScroll] = useState(0);
   const [splitScrollX, setSplitScrollX] = useState(0);
   const [diffPanelHeight, setDiffPanelHeight] = useState(0);
   const [diffScrollHeight, setDiffScrollHeight] = useState(0);
+  const [diffPanelWidth, setDiffPanelWidth] = useState(0);
   const [diffScrollTop, setDiffScrollTop] = useState(0);
+  const splitDiffEnabled = diffViewMode ? diffViewMode === "split" : prefersSplitDiff;
+  const splitDiffAvailableWidth = Math.max(0, diffPanelWidth - (showDiffMinimap ? DIFF_MINIMAP_WIDTH : 0));
+  const splitDiffHasRoom = diffPanelWidth === 0 || splitDiffAvailableWidth >= MIN_SPLIT_DIFF_WIDTH;
+  const showSplitDiff = Boolean(!mediaPreview && splitDiffEnabled && splitDiffHasRoom && activeTab && canUseSplitDiff(activeTab.file.status) && splitDiffRows.length > 0);
   const virtualRowCount = mediaPreview ? 0 : showSplitDiff ? splitDiffRows.length : activeDiffLines.length;
   const firstDiffIndex = useMemo(
     () => showSplitDiff ? splitDiffRows.findIndex((row) => row.type !== "context") : activeDiffLines.findIndex((line) => line.type !== "context"),
@@ -107,7 +114,6 @@ export function WorktreeDetailPanel({
       : activeDiffLines.map((line) => ({ type: line.type })),
     [activeDiffLines, showSplitDiff, splitDiffRows]
   );
-  const showDiffMinimap = !mediaPreview && minimapLines.some((line) => line.type !== "context");
   const diffVirtualEnabled = !diffWrap && virtualRowCount > DIFF_VIRTUAL_THRESHOLD;
   const diffVirtualRange = useMemo(() => {
     if (!diffVirtualEnabled) {
@@ -139,15 +145,16 @@ export function WorktreeDetailPanel({
     }
 
     const measure = () => {
-      setDiffPanelHeight(panel.clientHeight);
-      setDiffScrollHeight(panel.scrollHeight);
+      setDiffPanelHeight((current) => current === panel.clientHeight ? current : panel.clientHeight);
+      setDiffScrollHeight((current) => current === panel.scrollHeight ? current : panel.scrollHeight);
+      setDiffPanelWidth((current) => current === panel.clientWidth ? current : panel.clientWidth);
     };
     measure();
 
     const resizeObserver = new ResizeObserver(measure);
     resizeObserver.observe(panel);
     return () => resizeObserver.disconnect();
-  }, [activeDiffLines.length, activeTab?.id, diffWrap, showSplitDiff, splitDiffRows.length]);
+  }, [activeDiffLines.length, activeTab?.id, activeTab?.loading, diffWrap, showSplitDiff, splitDiffRows.length]);
 
   useLayoutEffect(() => {
     setSplitScrollX(0);
@@ -211,16 +218,34 @@ export function WorktreeDetailPanel({
 
     const measure = () => {
       const codeWraps = Array.from(root.querySelectorAll<HTMLElement>(".split-diff-code-wrap"));
-      const nextMaxScroll = Math.ceil(
-        codeWraps.reduce((maxScroll, wrap) => {
-          const code = wrap.querySelector<HTMLElement>(".split-diff-code-text");
-          if (!code) {
-            return maxScroll;
-          }
+      const firstWrap = codeWraps[0];
+      const firstCode = firstWrap?.querySelector<HTMLElement>(".split-diff-code-text");
+      if (!firstWrap || !firstCode) {
+        setSplitMaxScroll(0);
+        return;
+      }
 
-          return Math.max(maxScroll, code.scrollWidth - wrap.clientWidth);
-        }, 0)
-      );
+      const codeStyle = window.getComputedStyle(firstCode);
+      const styleKey = [
+        codeStyle.font,
+        codeStyle.letterSpacing,
+        codeStyle.paddingLeft,
+        codeStyle.paddingRight,
+        codeStyle.tabSize
+      ].join("|");
+      const cachedWidth = splitContentWidthCacheRef.current;
+      const contentWidth = cachedWidth?.rows === splitDiffRows && cachedWidth.styleKey === styleKey
+        ? cachedWidth.width
+        : measureSplitDiffContentWidth(splitDiffRows, codeStyle);
+      splitContentWidthCacheRef.current = { rows: splitDiffRows, styleKey, width: contentWidth };
+
+      const visibleMaxScroll = codeWraps.reduce((maxScroll, wrap) => {
+        const code = wrap.querySelector<HTMLElement>(".split-diff-code-text");
+        return code ? Math.max(maxScroll, code.scrollWidth - wrap.clientWidth) : maxScroll;
+      }, 0);
+      const nextMaxScroll = diffWrap
+        ? 0
+        : Math.ceil(Math.max(visibleMaxScroll, contentWidth - firstWrap.clientWidth, 0));
 
       setSplitMaxScroll(nextMaxScroll);
       setSplitScrollX((current) => Math.min(current, nextMaxScroll));
@@ -238,7 +263,7 @@ export function WorktreeDetailPanel({
       resizeObserver.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, [diffVirtualRange.endIndex, diffVirtualRange.startIndex, showSplitDiff, splitDiffRows.length]);
+  }, [diffWrap, showSplitDiff, splitDiffRows]);
 
   const splitDiffStyle = showSplitDiff ? ({ "--split-scroll-x": `${splitScrollX}px` } as CSSProperties) : undefined;
 
@@ -1031,6 +1056,50 @@ function buildInlineDiffSegments(value: string, counterpart: string): Array<{ te
     { text: value.slice(prefixLength, changedEnd), changed: true },
     { text: value.slice(changedEnd), changed: false }
   ].filter((segment) => segment.text.length > 0);
+}
+
+function measureSplitDiffContentWidth(rows: SplitDiffRow[], codeStyle: CSSStyleDeclaration): number {
+  const context = document.createElement("canvas").getContext("2d");
+  if (!context) {
+    return 0;
+  }
+
+  context.font = codeStyle.font;
+  const letterSpacing = Number.parseFloat(codeStyle.letterSpacing) || 0;
+  const horizontalPadding = (Number.parseFloat(codeStyle.paddingLeft) || 0) + (Number.parseFloat(codeStyle.paddingRight) || 0);
+  const tabSize = Math.max(1, Number.parseInt(codeStyle.tabSize, 10) || 8);
+  let maxTextWidth = 0;
+
+  for (const row of rows) {
+    for (const line of [row.left, row.right]) {
+      if (!line) {
+        continue;
+      }
+
+      const text = expandTabs(line.content || " ", tabSize);
+      const spacingWidth = Math.max(0, Array.from(text).length - 1) * letterSpacing;
+      maxTextWidth = Math.max(maxTextWidth, context.measureText(text).width + spacingWidth);
+    }
+  }
+
+  return maxTextWidth + horizontalPadding;
+}
+
+function expandTabs(value: string, tabSize: number): string {
+  let column = 0;
+  let result = "";
+  for (const character of value) {
+    if (character === "\t") {
+      const spaceCount = tabSize - (column % tabSize);
+      result += " ".repeat(spaceCount);
+      column += spaceCount;
+      continue;
+    }
+
+    result += character;
+    column += 1;
+  }
+  return result;
 }
 
 function useSplitDiffLayout() {

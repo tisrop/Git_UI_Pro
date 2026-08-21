@@ -55,19 +55,23 @@ export function DiffMinimap({
       return;
     }
 
-    const draw = () => drawOverviewRuler(canvas, root, lines, scrollHeight);
+    const scrollContainer = scrollContainerRef.current;
+    const draw = () => drawOverviewRuler(canvas, root, scrollContainer, lines, scrollHeight);
     draw();
 
     const resizeObserver = new ResizeObserver(draw);
     const themeObserver = new MutationObserver(draw);
     const themeRoot = root.closest(".app-shell") ?? document.documentElement;
     resizeObserver.observe(root);
+    if (scrollContainer) {
+      resizeObserver.observe(scrollContainer);
+    }
     themeObserver.observe(themeRoot, { attributes: true, attributeFilter: ["class", "style"] });
     return () => {
       resizeObserver.disconnect();
       themeObserver.disconnect();
     };
-  }, [lines, scrollHeight]);
+  }, [lines, scrollContainerRef, scrollHeight]);
 
   function setScrollTop(nextScrollTop: number) {
     const scrollContainer = scrollContainerRef.current;
@@ -200,7 +204,13 @@ export function DiffMinimap({
   );
 }
 
-function drawOverviewRuler(canvas: HTMLCanvasElement, root: HTMLDivElement, lines: DiffMinimapLine[], scrollHeight: number) {
+function drawOverviewRuler(
+  canvas: HTMLCanvasElement,
+  root: HTMLDivElement,
+  scrollContainer: HTMLElement | null,
+  lines: DiffMinimapLine[],
+  scrollHeight: number
+) {
   const width = root.clientWidth;
   const height = root.clientHeight;
   if (width <= 0 || height <= 0) {
@@ -237,10 +247,18 @@ function drawOverviewRuler(canvas: HTMLCanvasElement, root: HTMLDivElement, line
   const overviewLaneWidth = (overviewWidth - overviewGap) / 2;
   const contentScale = height / Math.max(height, scrollHeight);
   const estimatedRowHeight = 24;
-  const markerHeight = Math.max(3, estimatedRowHeight * contentScale);
+  const renderedRows = collectRenderedRowMetrics(scrollContainer);
+  const firstRenderedRow = renderedRows.values().next().value as DiffRowMetrics | undefined;
+  const estimatedContentTop = firstRenderedRow
+    ? firstRenderedRow.top - firstRenderedRow.index * estimatedRowHeight
+    : 0;
 
   lines.forEach((line, index) => {
-    const markerY = Math.min(height - markerHeight, index * estimatedRowHeight * contentScale);
+    const renderedRow = renderedRows.get(index);
+    const rowTop = renderedRow?.top ?? estimatedContentTop + index * estimatedRowHeight;
+    const rowHeight = renderedRow?.height ?? estimatedRowHeight;
+    const markerHeight = Math.max(3, rowHeight * contentScale);
+    const markerY = clampNumber(rowTop * contentScale, 0, Math.max(0, height - markerHeight));
 
     if (line.type === "delete" || line.type === "replace") {
       context.globalAlpha = 0.9;
@@ -255,6 +273,34 @@ function drawOverviewRuler(canvas: HTMLCanvasElement, root: HTMLDivElement, line
   });
 
   context.globalAlpha = 1;
+}
+
+interface DiffRowMetrics {
+  index: number;
+  top: number;
+  height: number;
+}
+
+function collectRenderedRowMetrics(scrollContainer: HTMLElement | null): Map<number, DiffRowMetrics> {
+  const metrics = new Map<number, DiffRowMetrics>();
+  if (!scrollContainer) {
+    return metrics;
+  }
+
+  const containerBounds = scrollContainer.getBoundingClientRect();
+  scrollContainer.querySelectorAll<HTMLElement>("[data-diff-row-index]").forEach((row) => {
+    const index = Number(row.dataset.diffRowIndex);
+    if (!Number.isInteger(index) || index < 0) {
+      return;
+    }
+    const rowBounds = row.getBoundingClientRect();
+    metrics.set(index, {
+      index,
+      top: rowBounds.top - containerBounds.top + scrollContainer.scrollTop,
+      height: rowBounds.height
+    });
+  });
+  return metrics;
 }
 
 function clampNumber(value: number, min: number, max: number): number {

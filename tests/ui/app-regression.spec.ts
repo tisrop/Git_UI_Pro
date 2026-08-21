@@ -735,6 +735,7 @@ test("加载更多提交期间不重复显示加载入口", async ({ page }) => 
 });
 
 test("文件对比铺满详情区并高亮行内变更", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 800 });
   await page.goto("/");
   const modifiedFile = page.locator(".scm-file-row").filter({ hasText: "App.tsx" }).first();
   await expect(modifiedFile).toBeVisible();
@@ -751,7 +752,7 @@ test("文件对比铺满详情区并高亮行内变更", async ({ page }) => {
     const gridRect = grid.getBoundingClientRect();
     return {
       panelClientHeight: panel.clientHeight,
-      panelWidth: panelRect.width,
+      panelContentWidth: panel.clientWidth - Number.parseFloat(window.getComputedStyle(panel).paddingRight),
       gridHeight: gridRect.height,
       gridWidth: gridRect.width,
       horizontalInset: gridRect.left - panelRect.left
@@ -759,8 +760,83 @@ test("文件对比铺满详情区并高亮行内变更", async ({ page }) => {
   });
 
   expect(metrics.horizontalInset).toBeLessThanOrEqual(1);
-  expect(metrics.gridWidth).toBeGreaterThanOrEqual(metrics.panelWidth - 20);
+  expect(metrics.gridWidth).toBeGreaterThanOrEqual(metrics.panelContentWidth - 1);
   expect(metrics.gridHeight).toBeGreaterThanOrEqual(metrics.panelClientHeight - 16);
+});
+
+test("窄屏文件对比自动切换行内布局并在空间恢复后返回左右布局", async ({ page }) => {
+  await page.setViewportSize({ width: 1536, height: 864 });
+  await page.goto("/");
+  const modifiedFile = page.locator(".scm-file-row").filter({ hasText: "App.tsx" }).first();
+  await expect(modifiedFile).toBeVisible();
+  await modifiedFile.click();
+
+  const diffPanel = page.locator(".editor-diff-panel");
+  await expect(diffPanel).toBeVisible();
+  await expect(diffPanel).not.toHaveClass(/split-mode/);
+  await expect(diffPanel.locator(".diff-lines")).toBeVisible();
+  expect(await diffPanel.evaluate((panel) => panel.clientWidth - Number.parseFloat(window.getComputedStyle(panel).paddingRight))).toBeLessThan(960);
+
+  await page.getByRole("button", { name: "收起项目栏" }).click();
+  await expect(diffPanel).toHaveClass(/split-mode/);
+  await expect(diffPanel.locator(".split-diff-grid")).toBeVisible();
+  expect(await diffPanel.evaluate((panel) => panel.clientWidth - Number.parseFloat(window.getComputedStyle(panel).paddingRight))).toBeGreaterThanOrEqual(960);
+});
+
+test("长文件对比使用整文件宽度并保持虚拟滚动高度稳定", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 720 });
+  await page.goto("/");
+  const modifiedFile = page.locator(".scm-file-row").filter({ hasText: "App.tsx" }).first();
+  await expect(modifiedFile).toBeVisible();
+  await page.getByRole("button", { name: "隐藏控制台" }).click();
+  await page.evaluate(() => {
+    const diffLines = Array.from({ length: 650 }, (_, index) => ({
+      type: index === 100 || index === 620 ? "add" as const : "context" as const,
+      oldLineNumber: index === 100 || index === 620 ? undefined : index + 1,
+      newLineNumber: index + 1,
+      content: index === 620 ? `const wholeFileWidth = "${"x".repeat(420)}";` : `const line${index + 1} = ${index + 1};`
+    }));
+    window.gitUI = {
+      getWorktreeFilePreview: async () => null,
+      getWorktreeDiff: async () => diffLines,
+      getWindowState: async () => ({ isMaximized: false, isFullScreen: false }),
+      onWindowStateChange: () => () => undefined
+    } as unknown as typeof window.gitUI;
+  });
+
+  await modifiedFile.click();
+  const diffPanel = page.locator(".editor-diff-panel.split-mode");
+  const horizontalScroll = page.locator(".split-diff-horizontal-scroll");
+  const minimap = page.getByRole("scrollbar", { name: "文件差异概览" });
+  await expect(diffPanel).toBeVisible();
+  await expect(horizontalScroll).toBeVisible();
+  await expect(minimap).toBeVisible();
+  await expect(diffPanel.locator(".split-diff-cell.new .line-number").filter({ hasText: /^101$/ })).toBeVisible();
+  const initialMetrics = await diffPanel.evaluate((panel) => ({
+    scrollHeight: panel.scrollHeight,
+    renderedRows: panel.querySelectorAll(".split-diff-row").length
+  }));
+  const horizontalRange = await horizontalScroll.evaluate((scroll) => scroll.scrollWidth - scroll.clientWidth);
+
+  expect(initialMetrics.renderedRows).toBeLessThan(650);
+  expect(horizontalRange).toBeGreaterThan(1_000);
+
+  await minimap.focus();
+  await minimap.press("End");
+  await expect(diffPanel.locator(".split-diff-cell.new .line-number").filter({ hasText: /^650$/ })).toBeVisible();
+  const minimapMax = await minimap.getAttribute("aria-valuemax");
+  await expect.poll(() => minimap.getAttribute("aria-valuenow")).toBe(minimapMax);
+  const longLineNumber = diffPanel.locator(".split-diff-cell.new .line-number").filter({ hasText: /^621$/ });
+  await expect(longLineNumber).toBeVisible();
+  const longLineCell = longLineNumber.locator("..");
+  const renderedLongLineRange = await longLineCell.evaluate((cell) => {
+    const wrap = cell.querySelector<HTMLElement>(".split-diff-code-wrap")!;
+    const code = cell.querySelector<HTMLElement>(".split-diff-code-text")!;
+    return code.scrollWidth - wrap.clientWidth;
+  });
+  const bottomScrollHeight = await diffPanel.evaluate((panel) => panel.scrollHeight);
+  expect(Math.abs(horizontalRange - renderedLongLineRange)).toBeLessThanOrEqual(2);
+  expect(Math.abs(bottomScrollHeight - initialMetrics.scrollHeight)).toBeLessThanOrEqual(1);
 });
 
 test("打开提交文件时使用圆形加载状态且不闪现空 diff 提示", async ({ page }) => {
