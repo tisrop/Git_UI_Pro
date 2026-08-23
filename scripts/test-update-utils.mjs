@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -23,10 +24,13 @@ const {
 const {
   UPDATE_CHECK_INITIAL_DELAY_MS,
   UPDATE_CHECK_INTERVAL_MS,
+  ReusableInstance,
   UpdateCheckGate,
+  macUpdateProgress,
   parseLatestStableGithubRelease,
   resolveFreshUpgradeCheck,
-  startFreshUpgradeDownload
+  startFreshUpgradeDownload,
+  updateCapabilities
 } = updateService;
 const { githubReleaseUrl, normalizeReleaseNotes, updateErrorMessage } = updateUtils;
 const {
@@ -62,6 +66,53 @@ const SHA256 = "a".repeat(64);
 test("正式版后台更新检查使用短周期调度", () => {
   assert.equal(UPDATE_CHECK_INITIAL_DELAY_MS, 8_000);
   assert.equal(UPDATE_CHECK_INTERVAL_MS, 5 * 60 * 1_000);
+});
+
+test("应用内更新能力按平台和打包状态开放", () => {
+  assert.deepEqual(updateCapabilities("darwin", true), { sources: ["github"], rollback: false });
+  assert.deepEqual(updateCapabilities("win32", true), { sources: ["github", "gitee"], rollback: true });
+  assert.deepEqual(updateCapabilities("darwin", false), { sources: [], rollback: false });
+  assert.deepEqual(updateCapabilities("linux", true), { sources: [], rollback: false });
+});
+
+test("macOS 更新器持有器在重复检查与下载间复用同一实例", () => {
+  let created = 0;
+  const nativeUpdater = new EventEmitter();
+  const holder = new ReusableInstance(() => {
+    created += 1;
+    nativeUpdater.on("error", () => {});
+    nativeUpdater.on("update-downloaded", () => {});
+    return { id: created };
+  });
+
+  const backgroundCheckUpdater = holder.get();
+  const manualCheckUpdater = holder.get();
+  const downloadUpdater = holder.get();
+
+  assert.equal(backgroundCheckUpdater, manualCheckUpdater);
+  assert.equal(manualCheckUpdater, downloadUpdater);
+  assert.equal(holder.current(), backgroundCheckUpdater);
+  assert.equal(created, 1);
+  assert.equal(nativeUpdater.listenerCount("error"), 1);
+  assert.equal(nativeUpdater.listenerCount("update-downloaded"), 1);
+});
+
+test("macOS 下载进度始终标记为 GitHub 更新源", () => {
+  assert.deepEqual(
+    macUpdateProgress(
+      { percent: 42.4, transferred: 424, total: 1000, bytesPerSecond: 128 },
+      "https://github.com/zjx150504-lgtm/Git_UI_Pro/releases/tag/v0.2.0"
+    ),
+    {
+      percent: 42.4,
+      transferred: 424,
+      total: 1000,
+      bytesPerSecond: 128,
+      sourceId: "github",
+      sourceLabel: "GitHub 更新源",
+      sourceReleaseUrl: "https://github.com/zjx150504-lgtm/Git_UI_Pro/releases/tag/v0.2.0"
+    }
+  );
 });
 
 test("后台检查与手动刷新共享同一个进行中请求", async () => {

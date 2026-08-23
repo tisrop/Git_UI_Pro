@@ -86,6 +86,11 @@ export type UpdatePhase =
 export type UpdateOperation = "upgrade" | "rollback";
 export type UpdateSource = "github" | "gitee";
 
+export interface UpdateCapabilities {
+  sources: UpdateSource[];
+  rollback: boolean;
+}
+
 export interface UpdateProgress {
   percent: number;
   transferred: number;
@@ -100,6 +105,7 @@ export interface UpdateProgress {
 export interface UpdateState {
   revision: number;
   source: UpdateSource;
+  capabilities: UpdateCapabilities;
   phase: UpdatePhase;
   operation: UpdateOperation;
   currentVersion: string;

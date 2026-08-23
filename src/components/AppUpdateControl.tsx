@@ -127,10 +127,10 @@ export function AppUpdateControl() {
   }, [open, detailsOpen]);
 
   useEffect(() => {
-    if (open && historyExpanded && historyItems.length === 0 && !historyLoading && !historyError) {
+    if (state.capabilities.rollback && open && historyExpanded && historyItems.length === 0 && !historyLoading && !historyError) {
       void loadReleaseHistory(false);
     }
-  }, [open, historyExpanded]);
+  }, [state.capabilities.rollback, open, historyExpanded]);
 
   useEffect(
     () => () => {
@@ -154,9 +154,9 @@ export function AppUpdateControl() {
   const triggerLabel = hasUpgradeNotification
     ? `发现新版本 v${stripVersionPrefix(state.availableVersion ?? state.currentVersion)}`
     : "关于、版本与更新";
-  const canCheck = !actionPending && state.operation !== "rollback" && !["checking", "downloading", "downloaded", "installing"].includes(state.phase);
+  const canCheck = state.capabilities.sources.length > 0 && !actionPending && state.operation !== "rollback" && !["checking", "downloading", "downloaded", "installing"].includes(state.phase);
   const rollbackNeedsPreparation = state.operation === "rollback" && state.phase === "error" && !state.progress;
-  const canChangeSource = !actionPending && state.operation !== "rollback" && !["checking", "downloading", "downloaded", "installing"].includes(state.phase);
+  const canChangeSource = state.capabilities.sources.length > 1 && !actionPending && state.operation !== "rollback" && !["checking", "downloading", "downloaded", "installing"].includes(state.phase);
   const detailVersion = stripVersionPrefix(hasTarget ? state.availableVersion ?? state.currentVersion : state.currentVersion);
   const detailHistoryItem = historyItems.find((item) => stripVersionPrefix(item.version) === detailVersion);
   const detailItems = releaseDetails?.contentSource === "compare"
@@ -278,6 +278,7 @@ export function AppUpdateControl() {
         setState((current) => ({
           revision: current.revision + 1,
           source: current.source,
+          capabilities: current.capabilities,
           phase: "up-to-date",
           operation: "upgrade",
           currentVersion: current.currentVersion,
@@ -369,6 +370,7 @@ export function AppUpdateControl() {
       setState({
         revision: state.revision + 1,
         source: state.source,
+        capabilities: state.capabilities,
         phase: "available",
         operation: "rollback",
         currentVersion: state.currentVersion,
@@ -406,7 +408,14 @@ export function AppUpdateControl() {
         window.clearTimeout(mockTimerRef.current);
         mockTimerRef.current = undefined;
       }
-      setState({ revision: state.revision + 1, source: state.source, phase: "idle", operation: "upgrade", currentVersion: state.currentVersion });
+      setState({
+        revision: state.revision + 1,
+        source: state.source,
+        capabilities: state.capabilities,
+        phase: "idle",
+        operation: "upgrade",
+        currentVersion: state.currentVersion
+      });
       setSelectedHistoryVersion("");
       setActionPending(false);
       return;
@@ -576,7 +585,7 @@ export function AppUpdateControl() {
           <div className="app-update-panel-header">
             <h2 id="app-update-title">当前版本</h2>
             <div className="app-update-header-actions">
-              <div className="app-update-header-source-actions" role="radiogroup" aria-label="选择更新源">
+              {state.capabilities.sources.length > 1 ? <div className="app-update-header-source-actions" role="radiogroup" aria-label="选择更新源">
                 <PathTooltip content="使用 GitHub 更新源" className="app-update-action-tooltip">
                   <button
                     type="button"
@@ -590,7 +599,7 @@ export function AppUpdateControl() {
                     <Github size={15} />
                   </button>
                 </PathTooltip>
-                <PathTooltip content="使用 Gitee 更新源" className="app-update-action-tooltip">
+                {state.capabilities.sources.includes("gitee") ? <PathTooltip content="使用 Gitee 更新源" className="app-update-action-tooltip">
                   <button
                     type="button"
                     className="app-update-icon-button app-update-source-icon"
@@ -602,8 +611,8 @@ export function AppUpdateControl() {
                   >
                     <Cloud size={15} />
                   </button>
-                </PathTooltip>
-              </div>
+                </PathTooltip> : null}
+              </div> : null}
               <PathTooltip content="悬停查看本次更新内容" className="app-update-action-tooltip">
                 <button
                   type="button"
@@ -686,7 +695,7 @@ export function AppUpdateControl() {
               </div>
             ) : null}
 
-            <section className="app-update-history" data-expanded={historyExpanded}>
+            {state.capabilities.rollback ? <section className="app-update-history" data-expanded={historyExpanded}>
               <PathTooltip content="仅显示带 SHA-256 校验的同类型正式版本" className="app-update-history-tooltip">
                 <button
                   type="button"
@@ -743,7 +752,7 @@ export function AppUpdateControl() {
 
                 </> : null}
               </div>
-            </section>
+            </section> : null}
           </div>
 
           {hasTarget || state.operation === "rollback" ? (
@@ -846,7 +855,7 @@ function phaseLabel(state: UpdateState): string {
   const rollback = state.operation === "rollback";
   switch (state.phase) {
     case "unsupported":
-      return "仅支持 Windows 正式版";
+      return "当前系统不支持应用内更新";
     case "idle":
       return "正式版";
     case "checking":
@@ -890,7 +899,14 @@ function hasTargetVersion(state: UpdateState): boolean {
 }
 
 function unsupportedUpdateState(): UpdateState {
-  return { revision: 0, source: storedUpdateSource(), phase: "unsupported", operation: "upgrade", currentVersion: CURRENT_VERSION };
+  return {
+    revision: 0,
+    source: storedUpdateSource(),
+    capabilities: { sources: [], rollback: false },
+    phase: "unsupported",
+    operation: "upgrade",
+    currentVersion: CURRENT_VERSION
+  };
 }
 
 function requireUpdateBridgeMethod<T>(method: T | undefined): T {
@@ -1002,6 +1018,7 @@ function readMockUpdateState(): UpdateState | null {
   const baseState: UpdateState = {
     revision: 0,
     source,
+    capabilities: { sources: ["github", "gitee"], rollback: true },
     phase,
     operation: "upgrade",
     currentVersion,
