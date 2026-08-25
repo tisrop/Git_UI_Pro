@@ -404,6 +404,93 @@ test("项目栏头部使用单行等尺寸图标且搜索可展开", async ({ pa
   await expect.poll(async () => searchControl.evaluate((element) => element.getBoundingClientRect().width)).toBeLessThanOrEqual(44);
 });
 
+test("收起项目栏后标题栏居中显示当前项目名称", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await expect(page.locator(".project-rail-item.active")).toBeVisible();
+  await expect(page.locator(".app-chrome-current-project")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "收起项目栏" }).click();
+  const currentProject = page.getByLabel("当前项目：Git UI Pro");
+  await expect(currentProject).toBeVisible();
+  await expect(currentProject).toHaveText("Git UI Pro");
+
+  const metrics = await page.evaluate(() => {
+    const label = document.querySelector<HTMLElement>(".app-chrome-current-project")!.getBoundingClientRect();
+    const dragRegion = document.querySelector<HTMLElement>(".app-chrome-drag-region")!.getBoundingClientRect();
+    const tools = document.querySelector<HTMLElement>(".app-chrome-tools")!.getBoundingClientRect();
+    const controls = document.querySelector<HTMLElement>(".app-window-controls")!.getBoundingClientRect();
+    return {
+      centerDelta: Math.abs((label.left + label.right) / 2 - (dragRegion.left + dragRegion.right) / 2),
+      clearsTools: label.left >= tools.right,
+      clearsWindowControls: label.right <= controls.left
+    };
+  });
+  expect(metrics.centerDelta).toBeLessThanOrEqual(1);
+  expect(metrics.clearsTools).toBe(true);
+  expect(metrics.clearsWindowControls).toBe(true);
+
+  await page.getByRole("button", { name: "展开项目栏" }).click();
+  await expect(currentProject).toHaveCount(0);
+});
+
+test("未跟踪文件右键可添加到 gitignore 并刷新更改列表", async ({ page }) => {
+  await page.goto("/");
+  const fileRow = page.locator(".scm-file-row").filter({ hasText: "app.css" }).first();
+  await expect(fileRow).toBeVisible();
+  await expect(fileRow.locator(".scm-file-status")).toHaveText("U");
+
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __gitignoreWrite?: { content: string; expectedRevision: string };
+    };
+    window.gitUI = {
+      readGitIgnore: async () => ({ exists: false, content: "", revision: "missing" }),
+      writeGitIgnore: async (_repository, content, expectedRevision) => {
+        testWindow.__gitignoreWrite = { content, expectedRevision };
+        return true;
+      },
+      getProjectStatus: async () => ({
+        currentBranch: "master",
+        upstream: "origin/master",
+        ahead: 1,
+        behind: 0,
+        stagedCount: 1,
+        unstagedCount: 2,
+        untrackedCount: 0,
+        conflictedCount: 0,
+        hasConflicts: false
+      }),
+      getWorktree: async () => ({
+        stagedFiles: [{ path: "docs/PRD.md", status: "added", staged: true }],
+        unstagedFiles: [
+          { path: "src/App.tsx", status: "modified", staged: false },
+          { path: "electron/gitService.ts", status: "modified", staged: false }
+        ]
+      })
+    } as unknown as typeof window.gitUI;
+  });
+
+  await fileRow.click({ button: "right" });
+  const menu = page.getByRole("menu", { name: "src/styles/app.css 文件操作" });
+  await expect(menu).toBeVisible();
+  const menuBounds = await menu.boundingBox();
+  expect(menuBounds).not.toBeNull();
+  expect(menuBounds!.x).toBeGreaterThanOrEqual(0);
+  expect(menuBounds!.y).toBeGreaterThanOrEqual(0);
+  expect(menuBounds!.x + menuBounds!.width).toBeLessThanOrEqual(1280);
+  expect(menuBounds!.y + menuBounds!.height).toBeLessThanOrEqual(800);
+
+  await menu.getByRole("menuitem", { name: "添加到 .gitignore" }).click();
+  await expect.poll(() => page.evaluate(() => Boolean((window as typeof window & { __gitignoreWrite?: unknown }).__gitignoreWrite))).toBe(true);
+  const write = await page.evaluate(() => (window as typeof window & {
+    __gitignoreWrite: { content: string; expectedRevision: string };
+  }).__gitignoreWrite);
+  expect(write).toEqual({ content: "/src/styles/app.css\n", expectedRevision: "missing" });
+  await expect(page.locator("[data-sonner-toast]").filter({ hasText: "已添加到 .gitignore" })).toBeVisible();
+  await expect(fileRow).toBeHidden();
+});
+
 test("图表工具栏拖到最小宽度仍显示全部操作", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
@@ -907,7 +994,13 @@ test("长提交悬浮详情在小窗口内滚动而不越界", async ({ page }) 
 
   const card = page.locator(".commit-hover-card");
   await expect(card).toBeVisible();
+  const heading = card.locator(".commit-hover-heading");
+  const author = card.locator(".commit-hover-author");
+  const subject = card.locator(".commit-hover-subject");
   const body = card.locator(".commit-hover-body");
+  await expect(heading).toBeVisible();
+  await expect(author).toBeVisible();
+  await expect(subject).toBeVisible();
   await expect(body).toBeVisible();
   await body.evaluate((element) => {
     element.textContent = Array.from(
@@ -923,6 +1016,28 @@ test("长提交悬浮详情在小窗口内滚动而不越界", async ({ page }) 
       && rect.right <= window.innerWidth + 1
       && rect.bottom <= window.innerHeight + 1;
   })).toBe(true);
+  const headingMetrics = await card.evaluate((element) => {
+    const headingElement = element.querySelector<HTMLElement>(".commit-hover-heading")!;
+    const authorElement = element.querySelector<HTMLElement>(".commit-hover-author")!;
+    const subjectElement = element.querySelector<HTMLElement>(".commit-hover-subject")!;
+    const bodyElement = element.querySelector<HTMLElement>(".commit-hover-body")!;
+    const cardRect = element.getBoundingClientRect();
+    const headingRect = headingElement.getBoundingClientRect();
+    const authorRect = authorElement.getBoundingClientRect();
+    const subjectRect = subjectElement.getBoundingClientRect();
+    const bodyRect = bodyElement.getBoundingClientRect();
+    return {
+      headingInsideCard: headingRect.top >= cardRect.top && headingRect.bottom <= cardRect.bottom,
+      subjectBelowAuthor: subjectRect.top >= authorRect.bottom,
+      bodyBelowHeading: bodyRect.top >= headingRect.bottom,
+      subjectHeight: subjectRect.height,
+      subjectLineHeight: Number.parseFloat(getComputedStyle(subjectElement).lineHeight)
+    };
+  });
+  expect(headingMetrics.headingInsideCard).toBe(true);
+  expect(headingMetrics.subjectBelowAuthor).toBe(true);
+  expect(headingMetrics.bodyBelowHeading).toBe(true);
+  expect(headingMetrics.subjectHeight).toBeGreaterThanOrEqual(headingMetrics.subjectLineHeight - 1);
   const metrics = await body.evaluate((element) => ({
     clientHeight: element.clientHeight,
     scrollHeight: element.scrollHeight

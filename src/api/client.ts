@@ -464,7 +464,7 @@ export const apiClient = {
       stagedFiles: [{ path: "docs/PRD.md", status: "added", staged: true }],
       unstagedFiles: [
         { path: "src/App.tsx", status: "modified", staged: false },
-        { path: "src/styles/app.css", status: "added", staged: false },
+        { path: "src/styles/app.css", status: "untracked", staged: false },
         { path: "electron/gitService.ts", status: "modified", staged: false }
       ]
     };

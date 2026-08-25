@@ -257,6 +257,41 @@ button {
   -webkit-app-region: drag;
 }
 
+.app-chrome-current-project {
+  z-index: 1;
+  display: inline-flex;
+  grid-column: 4;
+  gap: 6px;
+  align-items: center;
+  justify-self: center;
+  max-width: min(420px, calc(100% - 24px));
+  height: 22px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 999px;
+  padding: 0 10px;
+  color: var(--muted-strong);
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--panel-strong) 46%, transparent);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+  pointer-events: none;
+  -webkit-app-region: drag;
+}
+
+.app-chrome-current-project > svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.app-chrome-current-project > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .app-window-controls,
 .app-window-controls button {
   -webkit-app-region: no-drag;
@@ -4701,7 +4736,8 @@ button {
   }
 }
 
-.project-context-menu {
+.project-context-menu,
+.scm-file-context-menu {
   position: fixed;
   z-index: 120;
   width: 216px;
@@ -4710,10 +4746,47 @@ button {
   overflow-y: auto;
 }
 
-.project-context-menu button {
+.project-context-menu button,
+.scm-file-context-menu button {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.scm-file-context-menu {
+  z-index: 330;
+}
+
+.scm-file-context-heading {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 5px 9px 7px;
+}
+
+.scm-file-context-heading strong,
+.scm-file-context-heading small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scm-file-context-heading strong {
+  color: var(--text-strong);
+  font-size: 12px;
+}
+
+.scm-file-context-heading small,
+.scm-file-context-hint {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.scm-file-context-hint {
+  display: block;
+  padding: 4px 9px 6px;
 }
 
 .project-context-menu button.danger {
@@ -5526,6 +5599,7 @@ button {
 }
 
 .commit-hover-author,
+.commit-hover-heading,
 .commit-hover-subject,
 .commit-hover-body,
 .commit-hover-footer {
@@ -5565,8 +5639,14 @@ button {
   transform: rotate(45deg);
 }
 
+.commit-hover-heading {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+
 .commit-hover-subject {
-  flex: 0 1 auto;
+  display: block;
+  min-height: 1.35em;
   max-height: 7.2em;
   overflow-y: auto;
   font-size: 13px;

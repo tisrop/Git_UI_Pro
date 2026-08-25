@@ -2661,6 +2661,50 @@ export function App() {
     await loadProjectData(selectedProject);
   }
 
+  async function handleIgnoreFile(file: ChangedFile) {
+    if (!selectedProject) {
+      return;
+    }
+
+    if (file.status !== "untracked") {
+      notifyInfo("只有未跟踪文件可以直接忽略", "已被 Git 跟踪的文件需要先停止跟踪，.gitignore 才会生效。");
+      return;
+    }
+
+    if (!requireGitReady("添加忽略规则")) {
+      return;
+    }
+
+    const project = selectedProject;
+    const rule = gitIgnoreRuleForPath(file.path);
+    if (!rule || rule === "/.gitignore") {
+      notifyInfo("不能把 .gitignore 自身加入忽略规则");
+      return;
+    }
+
+    const toastId = notifyLoading(`正在添加忽略规则：${file.path}...`);
+    try {
+      const document = await apiClient.readGitIgnore(project);
+      const nextContent = appendGitIgnoreRule(document.content, rule);
+      await apiClient.writeGitIgnore(project, nextContent, document.revision);
+      notifySuccess("已添加到 .gitignore", rule, toastId);
+    } catch (error) {
+      notifyError(errorText(error, "添加忽略规则失败。"), undefined, toastId);
+      return;
+    }
+
+    if (selectedProjectIdRef.current !== project.id) {
+      return;
+    }
+
+    clearWorktreeEditorTabs();
+    try {
+      await reloadProjectWorktree(project);
+    } catch (error) {
+      notifyError("忽略规则已保存，但工作区刷新失败", errorText(error, "请手动刷新工作区。"));
+    }
+  }
+
   async function handleCommit(input: CommitInput): Promise<boolean> {
     if (!requireGitReady("提交")) {
       return false;
@@ -2884,6 +2928,7 @@ export function App() {
       <AppChrome
         onCommand={runAppCommand}
         sidebarCollapsed={leftCollapsed}
+        currentProjectName={selectedProject?.name}
         theme={resolvedTheme}
         onToggleSidebar={() => setLeftCollapsed((collapsed) => !collapsed)}
         onThemeChange={selectThemeMode}
@@ -2943,6 +2988,7 @@ export function App() {
                 onUnstageAll={handleUnstageAll}
                 onDiscardFile={handleDiscardFile}
                 onDiscardAll={handleDiscardAll}
+                onIgnoreFile={handleIgnoreFile}
                 onRefreshWorktree={() => void handleRefreshWorktree()}
                 onSelectFile={handleSelectWorktreeFile}
                 onPinFile={handlePinWorktreeFile}
@@ -3608,6 +3654,28 @@ function hasWorktreeChanges(project: GitProject): boolean {
 
 function worktreeTabId(file: ChangedFile): string {
   return `${file.staged ? "staged" : "unstaged"}:${file.path}`;
+}
+
+function gitIgnoreRuleForPath(filePath: string): string {
+  const normalizedPath = filePath
+    .replace(/\\/g, "/")
+    .replace(/^\.\//, "")
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "");
+  if (!normalizedPath) {
+    return "";
+  }
+
+  const escapedPath = Array.from(normalizedPath, (character) =>
+    "\\*?[] ".includes(character) ? `\\${character}` : character
+  ).join("");
+  return `/${escapedPath}`;
+}
+
+function appendGitIgnoreRule(content: string, rule: string): string {
+  const lineEnding = content.includes("\r\n") ? "\r\n" : "\n";
+  const separator = content.length > 0 && !content.endsWith("\n") && !content.endsWith("\r") ? lineEnding : "";
+  return `${content}${separator}${rule}${lineEnding}`;
 }
 
 function commitFileTabId(hash: string, filePath: string): string {

@@ -2195,7 +2195,8 @@ input[type="radio"]:focus-visible {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 16%, transparent);
 }
 
-.project-context-menu {
+.project-context-menu,
+.scm-file-context-menu {
   z-index: 340;
   display: grid;
   gap: 4px;
@@ -2210,7 +2211,13 @@ input[type="radio"]:focus-visible {
   -webkit-backdrop-filter: blur(30px) saturate(170%);
 }
 
-.project-context-menu button {
+.scm-file-context-menu {
+  width: 220px;
+  min-width: 220px;
+}
+
+.project-context-menu button,
+.scm-file-context-menu button {
   justify-content: flex-start;
   width: 100%;
   min-height: 40px;
@@ -2223,9 +2230,15 @@ input[type="radio"]:focus-visible {
   font-weight: 650;
 }
 
-.project-context-menu button:hover {
+.project-context-menu button:hover,
+.scm-file-context-menu button:hover {
   border-color: var(--glass-edge);
   background: var(--surface-hover);
+}
+
+.scm-file-context-menu button:disabled:hover {
+  border-color: transparent;
+  background: transparent;
 }
 
 .project-context-menu button.danger:hover {

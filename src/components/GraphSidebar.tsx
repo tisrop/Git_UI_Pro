@@ -2082,11 +2082,13 @@ function CommitHoverCard({
 
   return (
     <div className="commit-hover-card" style={style} ref={cardRef} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
-      <div className="commit-hover-author">
-        <strong>{commit.authorName}</strong>
-        <span>{commit.authorDate}</span>
+      <div className="commit-hover-heading">
+        <div className="commit-hover-author">
+          <strong>{commit.authorName}</strong>
+          <span>{commit.authorDate}</span>
+        </div>
+        <div className="commit-hover-subject">{commit.subject}</div>
       </div>
-      <div className="commit-hover-subject">{commit.subject}</div>
       {bodyText ? <div className="commit-hover-body">{bodyText}</div> : null}
       <div className="commit-hover-footer">
         {visibleRefsForCommit(commit, graphContext)

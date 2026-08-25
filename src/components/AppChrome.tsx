@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Copy, Minus, Moon, PanelLeftClose, PanelLeftOpen, Square, Sun, X } from "lucide-react";
+import { Check, ChevronDown, Copy, FolderGit2, Minus, Moon, PanelLeftClose, PanelLeftOpen, Square, Sun, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { WindowState } from "../types/electron";
 import { AppUpdateControl } from "./AppUpdateControl";
@@ -9,6 +9,7 @@ const APP_ICON_URL = new URL("../assets/git-ui-pro-mark.svg", import.meta.url).h
 interface AppChromeProps {
   onCommand: (command: string) => void;
   sidebarCollapsed: boolean;
+  currentProjectName?: string;
   theme: "light" | "dark";
   onToggleSidebar: () => void;
   onThemeChange: (theme: "light" | "dark") => void;
@@ -18,6 +19,7 @@ interface AppChromeProps {
 export function AppChrome({
   onCommand,
   sidebarCollapsed,
+  currentProjectName,
   theme,
   onToggleSidebar,
   onThemeChange,
@@ -137,6 +139,17 @@ export function AppChrome({
           </div>
           <AppUpdateControl />
         </div>
+        {sidebarCollapsed && currentProjectName ? (
+          <div
+            className="app-chrome-current-project"
+            aria-label={`当前项目：${currentProjectName}`}
+            aria-live="polite"
+            title={currentProjectName}
+          >
+            <FolderGit2 size={13} aria-hidden="true" />
+            <span>{currentProjectName}</span>
+          </div>
+        ) : null}
         <div className="app-chrome-drag-region" />
         <div className="app-window-controls" aria-label="窗口控制">
           <button type="button" title="最小化" onClick={() => runCommand("window:minimize")}>

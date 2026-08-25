@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, ChevronRight, GitMerge, GitPullRequest, Plus, RefreshCw, Trash2, Undo2 } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, FileX2, GitMerge, GitPullRequest, Plus, RefreshCw, Trash2, Undo2 } from "lucide-react";
 import { PathTooltip } from "./PathTooltip";
 import type { ChangedFile, CommitInput, GitProject, GitResetMode, WorktreeState } from "../types/domain";
 import { fileIconInfo } from "../utils/fileIcon";
@@ -15,6 +15,7 @@ interface WorkspaceViewProps {
   onUnstageAll: () => void;
   onDiscardFile: (file: ChangedFile) => void;
   onDiscardAll: () => void;
+  onIgnoreFile: (file: ChangedFile) => void | Promise<void>;
   onRefreshWorktree: () => void;
   onSelectFile: (file: ChangedFile) => void;
   onPinFile: (file: ChangedFile) => void;
@@ -38,9 +39,16 @@ interface CommitMessageDraftRequest {
   value: string;
 }
 
+interface ScmFileContextMenuState {
+  file: ChangedFile;
+  x: number;
+  y: number;
+}
+
 const COMMIT_MESSAGE_MIN_HEIGHT = 34;
 const COMMIT_MESSAGE_MAX_HEIGHT = 260;
 const COMMIT_ACTION_REVEAL_GAP = 8;
+const SCM_FILE_CONTEXT_MENU_VIEWPORT_GAP = 8;
 
 export function WorkspaceView({
   project,
@@ -51,6 +59,7 @@ export function WorkspaceView({
   onUnstageAll,
   onDiscardFile,
   onDiscardAll,
+  onIgnoreFile,
   onRefreshWorktree,
   onSelectFile,
   onPinFile,
@@ -75,10 +84,13 @@ export function WorkspaceView({
   const [changesOpen, setChangesOpen] = useState(true);
   const [conflictsOpen, setConflictsOpen] = useState(true);
   const [stagedOpen, setStagedOpen] = useState(true);
+  const [fileContextMenu, setFileContextMenu] = useState<ScmFileContextMenuState | null>(null);
   const commitActionsRef = useRef<HTMLDivElement>(null);
   const commitMenuButtonRef = useRef<HTMLButtonElement>(null);
   const commitMenuRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
+  const fileContextMenuRef = useRef<HTMLDivElement>(null);
+  const fileContextMenuOpenerRef = useRef<HTMLElement | null>(null);
   const handledMessageDraftRequestIdRef = useRef<number>();
   const projectId = project?.id;
   const message = projectId ? messageDrafts[projectId] ?? "" : "";
@@ -209,6 +221,60 @@ export function WorkspaceView({
     };
   }, [commitMenuOpen]);
 
+  useEffect(() => {
+    setFileContextMenu(null);
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!fileContextMenu) {
+      return;
+    }
+
+    const focusFrame = window.requestAnimationFrame(() => {
+      const firstItem = fileContextMenuRef.current?.querySelector<HTMLButtonElement>("button[role='menuitem']:not(:disabled)");
+      (firstItem ?? fileContextMenuRef.current)?.focus();
+    });
+    const closeOnPointerDown = () => closeFileContextMenu();
+    const closeOnWindowChange = () => closeFileContextMenu();
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeFileContextMenu(true);
+      }
+    };
+
+    document.addEventListener("pointerdown", closeOnPointerDown);
+    document.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("blur", closeOnWindowChange);
+    window.addEventListener("resize", closeOnWindowChange);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("pointerdown", closeOnPointerDown);
+      document.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("blur", closeOnWindowChange);
+      window.removeEventListener("resize", closeOnWindowChange);
+    };
+  }, [fileContextMenu]);
+
+  useLayoutEffect(() => {
+    const menu = fileContextMenuRef.current;
+    if (!fileContextMenu || !menu) {
+      return;
+    }
+
+    const rect = menu.getBoundingClientRect();
+    const nextX = Math.max(
+      SCM_FILE_CONTEXT_MENU_VIEWPORT_GAP,
+      Math.min(fileContextMenu.x, window.innerWidth - rect.width - SCM_FILE_CONTEXT_MENU_VIEWPORT_GAP)
+    );
+    const nextY = Math.max(
+      SCM_FILE_CONTEXT_MENU_VIEWPORT_GAP,
+      Math.min(fileContextMenu.y, window.innerHeight - rect.height - SCM_FILE_CONTEXT_MENU_VIEWPORT_GAP)
+    );
+    if (Math.abs(nextX - fileContextMenu.x) > 0.5 || Math.abs(nextY - fileContextMenu.y) > 0.5) {
+      setFileContextMenu((current) => current ? { ...current, x: nextX, y: nextY } : current);
+    }
+  }, [fileContextMenu]);
+
   function toggleCommitMenu() {
     const rect = commitMenuButtonRef.current?.getBoundingClientRect();
     if (rect) {
@@ -225,6 +291,46 @@ export function WorkspaceView({
       event.preventDefault();
       setCommitMenuOpen(false);
       window.requestAnimationFrame(() => commitMenuButtonRef.current?.focus());
+      return;
+    }
+
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+      return;
+    }
+
+    const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button[role='menuitem']:not(:disabled)"));
+    if (items.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    const currentIndex = items.findIndex((item) => item === document.activeElement);
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? items.length - 1
+        : event.key === "ArrowDown"
+          ? (currentIndex + 1 + items.length) % items.length
+          : (currentIndex - 1 + items.length) % items.length;
+    items[nextIndex].focus();
+  }
+
+  function closeFileContextMenu(restoreFocus = false) {
+    setFileContextMenu(null);
+    if (restoreFocus) {
+      window.requestAnimationFrame(() => fileContextMenuOpenerRef.current?.focus());
+    }
+  }
+
+  function openFileContextMenu(file: ChangedFile, x: number, y: number, opener: HTMLElement) {
+    fileContextMenuOpenerRef.current = opener;
+    setFileContextMenu({ file, x, y });
+  }
+
+  function handleFileContextMenuKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeFileContextMenu(true);
       return;
     }
 
@@ -423,6 +529,8 @@ export function WorkspaceView({
                   onPrimaryAction={() => onUnstageFile(file)}
                   onSelect={() => onSelectFile(file)}
                   onPin={() => onPinFile(file)}
+                  contextMenuOpen={sameWorktreeFile(fileContextMenu?.file, file)}
+                  onOpenContextMenu={(x, y, opener) => openFileContextMenu(file, x, y, opener)}
                   repositoryPath={project?.path}
                 />
               ))}
@@ -454,6 +562,8 @@ export function WorkspaceView({
                   onPrimaryAction={() => onSelectFile(file)}
                   onSelect={() => onSelectFile(file)}
                   onPin={() => onPinFile(file)}
+                  contextMenuOpen={sameWorktreeFile(fileContextMenu?.file, file)}
+                  onOpenContextMenu={(x, y, opener) => openFileContextMenu(file, x, y, opener)}
                   repositoryPath={project?.path}
                 />
               ))}
@@ -494,6 +604,8 @@ export function WorkspaceView({
                   onDiscard={() => onDiscardFile(file)}
                   onSelect={() => onSelectFile(file)}
                   onPin={() => onPinFile(file)}
+                  contextMenuOpen={sameWorktreeFile(fileContextMenu?.file, file)}
+                  onOpenContextMenu={(x, y, opener) => openFileContextMenu(file, x, y, opener)}
                   repositoryPath={project?.path}
                 />
               ))}
@@ -501,6 +613,45 @@ export function WorkspaceView({
           ) : null}
         </div>
       ) : <span id={panelBodyId} hidden />}
+      {fileContextMenu && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="floating-menu scm-file-context-menu"
+              role="menu"
+              aria-label={`${fileContextMenu.file.path} 文件操作`}
+              tabIndex={-1}
+              style={{ left: fileContextMenu.x, top: fileContextMenu.y }}
+              ref={fileContextMenuRef}
+              onPointerDown={(event) => event.stopPropagation()}
+              onContextMenu={(event) => event.preventDefault()}
+              onKeyDown={handleFileContextMenuKeyDown}
+            >
+              <div className="scm-file-context-heading" role="presentation">
+                <strong>{fileContextMenu.file.path.split(/[\\/]/).filter(Boolean).at(-1) ?? fileContextMenu.file.path}</strong>
+                <small>{fileContextMenu.file.path}</small>
+              </div>
+              <div className="menu-separator" role="separator" />
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!canAddFileToGitIgnore(fileContextMenu.file)}
+                title={canAddFileToGitIgnore(fileContextMenu.file) ? undefined : "只有未跟踪文件可以直接加入忽略规则"}
+                onClick={() => {
+                  const file = fileContextMenu.file;
+                  closeFileContextMenu();
+                  void onIgnoreFile(file);
+                }}
+              >
+                <FileX2 size={15} aria-hidden="true" />
+                <span>添加到 .gitignore</span>
+              </button>
+              {!canAddFileToGitIgnore(fileContextMenu.file) ? (
+                <small className="scm-file-context-hint">已跟踪文件需先停止跟踪，才能由忽略规则生效。</small>
+              ) : null}
+            </div>,
+            document.querySelector(".app-shell") ?? document.body
+          )
+        : null}
     </section>
   );
 }
@@ -576,6 +727,8 @@ function ScmFileRow({
   onDiscard,
   onSelect,
   onPin,
+  contextMenuOpen,
+  onOpenContextMenu,
   repositoryPath
 }: {
   file: ChangedFile;
@@ -586,6 +739,8 @@ function ScmFileRow({
   onDiscard?: () => void;
   onSelect: () => void;
   onPin: () => void;
+  contextMenuOpen: boolean;
+  onOpenContextMenu: (x: number, y: number, opener: HTMLElement) => void;
   repositoryPath?: string;
 }) {
   const clickTimerRef = useRef<number | undefined>();
@@ -616,12 +771,22 @@ function ScmFileRow({
       className={`scm-file-row ${selected ? "active" : ""}`}
       role="button"
       tabIndex={0}
+      aria-haspopup="menu"
+      aria-expanded={contextMenuOpen}
+      aria-keyshortcuts="Shift+F10"
       onClick={scheduleSelect}
       onDoubleClick={(event) => {
         event.preventDefault();
         pinImmediately();
       }}
       onKeyDown={(event) => {
+        if (event.target === event.currentTarget && ((event.shiftKey && event.key === "F10") || event.key === "ContextMenu")) {
+          event.preventDefault();
+          const rect = event.currentTarget.getBoundingClientRect();
+          onOpenContextMenu(rect.left + 18, rect.top + 18, event.currentTarget);
+          return;
+        }
+
         if (event.ctrlKey && event.key === "Enter") {
           pinImmediately();
           return;
@@ -630,6 +795,11 @@ function ScmFileRow({
         if (event.key === "Enter" || event.key === " ") {
           onSelect();
         }
+      }}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onOpenContextMenu(event.clientX, event.clientY, event.currentTarget);
       }}
     >
       <span className={`scm-file-icon ${icon.className}`}>{icon.label}</span>
@@ -674,6 +844,14 @@ function ScmFileRow({
       </span>
     </div>
   );
+}
+
+function canAddFileToGitIgnore(file: ChangedFile): boolean {
+  return file.status === "untracked" && file.path.replace(/\\/g, "/").replace(/^\.\//, "") !== ".gitignore";
+}
+
+function sameWorktreeFile(left: ChangedFile | undefined, right: ChangedFile): boolean {
+  return Boolean(left && left.path === right.path && left.staged === right.staged);
 }
 
 function statusCode(status: ChangedFile["status"]): string {
