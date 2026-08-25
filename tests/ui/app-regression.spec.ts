@@ -1009,6 +1009,34 @@ test("提交变更文件默认使用可折叠树形视图", async ({ page }) => 
   await expect(tree.locator(".graph-commit-file-row").filter({ hasText: "PRD.md" })).toBeHidden();
 });
 
+test("提交文件列表突出显示当前预览文件", async ({ page }) => {
+  await page.goto("/");
+  await page.locator(".graph-commit-row").first().click();
+
+  const changedFile = page.locator(".graph-commit-file-row").filter({ hasText: "PRD.md" });
+  await expect(changedFile).toBeVisible();
+  await expect(changedFile).not.toHaveClass(/active/);
+  await expect(changedFile).not.toHaveAttribute("aria-current", "true");
+
+  await changedFile.click();
+  await expect(changedFile).toHaveClass(/active/);
+  await expect(changedFile).toHaveAttribute("aria-current", "true");
+
+  const selectedVisual = await changedFile.evaluate((element) => {
+    const style = getComputedStyle(element, "::after");
+    return {
+      backgroundColor: style.backgroundColor,
+      borderLeftColor: style.borderLeftColor,
+      borderLeftWidth: style.borderLeftWidth,
+      boxShadow: style.boxShadow
+    };
+  });
+  expect(selectedVisual.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+  expect(selectedVisual.borderLeftWidth).toBe("1px");
+  expect(selectedVisual.borderLeftColor).not.toBe("rgba(0, 0, 0, 0)");
+  expect(selectedVisual.boxShadow).not.toBe("none");
+});
+
 test("长提交悬浮详情在小窗口内滚动而不越界", async ({ page }) => {
   await page.setViewportSize({ width: 760, height: 320 });
   await page.goto("/");

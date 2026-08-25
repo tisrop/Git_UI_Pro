@@ -1593,6 +1593,7 @@ function GraphCommitFileRow({
     <button
       type="button"
       className={`graph-commit-file-row ${selected ? "active" : ""}`}
+      aria-current={selected ? "true" : undefined}
       style={graphFileIndentStyle(level)}
       onClick={scheduleSelect}
       onDoubleClick={(event) => {
