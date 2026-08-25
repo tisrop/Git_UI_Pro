@@ -24,7 +24,9 @@ const {
   UPDATE_CHECK_INITIAL_DELAY_MS,
   UPDATE_CHECK_INTERVAL_MS,
   UpdateCheckGate,
+  configureUpgradeUpdater,
   parseLatestStableGithubRelease,
+  restartAndInstallNsisUpdate,
   resolveFreshUpgradeCheck,
   startFreshUpgradeDownload
 } = updateService;
@@ -264,6 +266,34 @@ test("统一字符串与多版本发布说明格式", () => {
     ]),
     "v0.1.13\n修复更新流程\n\nv0.1.12\n完善发布控制台"
   );
+});
+
+test("安装版下载完成后支持退出静默安装与立即静默重启", () => {
+  const preferences = {
+    autoDownload: true,
+    autoInstallOnAppQuit: false,
+    allowPrerelease: true,
+    allowDowngrade: true,
+    fullChangelog: true,
+    disableWebInstaller: false,
+    disableDifferentialDownload: true
+  };
+  configureUpgradeUpdater(preferences);
+  assert.deepEqual(preferences, {
+    autoDownload: false,
+    autoInstallOnAppQuit: true,
+    allowPrerelease: false,
+    allowDowngrade: false,
+    fullChangelog: false,
+    disableWebInstaller: true,
+    disableDifferentialDownload: false
+  });
+
+  const installCalls = [];
+  restartAndInstallNsisUpdate({
+    quitAndInstall: (...args) => installCalls.push(args)
+  });
+  assert.deepEqual(installCalls, [[true, true]]);
 });
 
 test("更新详情选择目标版本的上一正式版", () => {

@@ -109,6 +109,20 @@ type UpgradeDownloadUpdater = {
   downloadUpdate: (cancellationToken?: CancellationToken) => Promise<string[]>;
 };
 
+type UpgradeUpdaterPreferences = {
+  autoDownload: boolean;
+  autoInstallOnAppQuit: boolean;
+  allowPrerelease: boolean;
+  allowDowngrade: boolean;
+  fullChangelog: boolean;
+  disableWebInstaller: boolean;
+  disableDifferentialDownload: boolean;
+};
+
+type InstallableNsisUpdater = {
+  quitAndInstall: (isSilent?: boolean, isForceRunAfter?: boolean) => void;
+};
+
 export type LatestStableRelease = {
   version: string;
   tagName: string;
@@ -192,6 +206,20 @@ export async function startFreshUpgradeDownload(
     downloadPromise: updater.downloadUpdate(result.cancellationToken),
     cancellationToken: result.cancellationToken ?? null
   };
+}
+
+export function configureUpgradeUpdater(updater: UpgradeUpdaterPreferences): void {
+  updater.autoDownload = false;
+  updater.autoInstallOnAppQuit = true;
+  updater.allowPrerelease = false;
+  updater.allowDowngrade = false;
+  updater.fullChangelog = false;
+  updater.disableWebInstaller = true;
+  updater.disableDifferentialDownload = false;
+}
+
+export function restartAndInstallNsisUpdate(updater: InstallableNsisUpdater): void {
+  updater.quitAndInstall(true, true);
 }
 
 export function parseLatestStableGithubRelease(value: unknown): LatestStableRelease {
@@ -750,19 +778,13 @@ export class UpdateService {
     }
 
     this.setState({ ...this.state, phase: "installing", error: undefined });
-    setImmediate(() => updater.quitAndInstall(false, true));
+    setImmediate(() => restartAndInstallNsisUpdate(updater));
     return true;
   }
 
   private createUpgradeUpdater(target: RollbackTarget): NsisUpdater {
     const updater = new NsisUpdater(createRollbackUpdaterOptions(target) as any);
-    updater.autoDownload = false;
-    updater.autoInstallOnAppQuit = false;
-    updater.allowPrerelease = false;
-    updater.allowDowngrade = false;
-    updater.fullChangelog = false;
-    updater.disableWebInstaller = true;
-    updater.disableDifferentialDownload = false;
+    configureUpgradeUpdater(updater);
     updater.logger = console;
     return updater;
   }
