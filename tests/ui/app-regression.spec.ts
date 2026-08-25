@@ -433,7 +433,10 @@ test("收起项目栏后标题栏居中显示当前项目名称", async ({ page 
       backgroundColor: style.backgroundColor,
       borderTopWidth: style.borderTopWidth,
       boxShadow: style.boxShadow,
-      paddingLeft: style.paddingLeft
+      paddingLeft: style.paddingLeft,
+      fontWeight: style.fontWeight,
+      lineHeight: Number.parseFloat(style.lineHeight),
+      fontSize: Number.parseFloat(style.fontSize)
     };
   });
   expect(metrics.centerDelta).toBeLessThanOrEqual(1);
@@ -446,6 +449,9 @@ test("收起项目栏后标题栏居中显示当前项目名称", async ({ page 
   expect(metrics.borderTopWidth).toBe("0px");
   expect(metrics.boxShadow).toBe("none");
   expect(metrics.paddingLeft).toBe("0px");
+  expect(metrics.fontSize).toBe(13);
+  expect(metrics.fontWeight).toBe("500");
+  expect(metrics.lineHeight).toBeGreaterThanOrEqual(metrics.fontSize * 1.4);
 
   await page.getByRole("button", { name: "展开项目栏" }).click();
   await expect(currentProject).toHaveCount(0);
