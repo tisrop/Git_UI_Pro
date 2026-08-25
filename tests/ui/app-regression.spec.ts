@@ -414,27 +414,44 @@ test("收起项目栏后标题栏居中显示当前项目名称", async ({ page 
   const currentProject = page.getByLabel("当前项目：Git UI Pro");
   await expect(currentProject).toBeVisible();
   await expect(currentProject).toHaveText("Git UI Pro");
+  await expect(currentProject.locator("svg")).toHaveCount(0);
 
   const metrics = await page.evaluate(() => {
     const label = document.querySelector<HTMLElement>(".app-chrome-current-project")!.getBoundingClientRect();
+    const titlebar = document.querySelector<HTMLElement>(".app-chrome-titlebar")!.getBoundingClientRect();
     const dragRegion = document.querySelector<HTMLElement>(".app-chrome-drag-region")!.getBoundingClientRect();
     const tools = document.querySelector<HTMLElement>(".app-chrome-tools")!.getBoundingClientRect();
     const controls = document.querySelector<HTMLElement>(".app-window-controls")!.getBoundingClientRect();
+    const style = getComputedStyle(document.querySelector<HTMLElement>(".app-chrome-current-project")!);
     return {
       centerDelta: Math.abs((label.left + label.right) / 2 - (dragRegion.left + dragRegion.right) / 2),
+      verticalCenterDelta: Math.abs((label.top + label.bottom) / 2 - (titlebar.top + titlebar.bottom) / 2),
       clearsTools: label.left >= tools.right,
-      clearsWindowControls: label.right <= controls.left
+      clearsWindowControls: label.right <= controls.left,
+      labelInsideTitlebar: label.top >= titlebar.top && label.bottom <= titlebar.bottom,
+      controlsInsideTitlebar: controls.top >= titlebar.top && controls.bottom <= titlebar.bottom,
+      backgroundColor: style.backgroundColor,
+      borderTopWidth: style.borderTopWidth,
+      boxShadow: style.boxShadow,
+      paddingLeft: style.paddingLeft
     };
   });
   expect(metrics.centerDelta).toBeLessThanOrEqual(1);
+  expect(metrics.verticalCenterDelta).toBeLessThanOrEqual(1);
   expect(metrics.clearsTools).toBe(true);
   expect(metrics.clearsWindowControls).toBe(true);
+  expect(metrics.labelInsideTitlebar).toBe(true);
+  expect(metrics.controlsInsideTitlebar).toBe(true);
+  expect(metrics.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+  expect(metrics.borderTopWidth).toBe("0px");
+  expect(metrics.boxShadow).toBe("none");
+  expect(metrics.paddingLeft).toBe("0px");
 
   await page.getByRole("button", { name: "展开项目栏" }).click();
   await expect(currentProject).toHaveCount(0);
 });
 
-test("未跟踪文件右键可添加到 gitignore 并刷新更改列表", async ({ page }) => {
+test("未跟踪文件通过行内图标添加到 gitignore 并刷新更改列表", async ({ page }) => {
   await page.goto("/");
   const fileRow = page.locator(".scm-file-row").filter({ hasText: "app.css" }).first();
   await expect(fileRow).toBeVisible();
@@ -472,16 +489,16 @@ test("未跟踪文件右键可添加到 gitignore 并刷新更改列表", async 
   });
 
   await fileRow.click({ button: "right" });
-  const menu = page.getByRole("menu", { name: "src/styles/app.css 文件操作" });
-  await expect(menu).toBeVisible();
-  const menuBounds = await menu.boundingBox();
-  expect(menuBounds).not.toBeNull();
-  expect(menuBounds!.x).toBeGreaterThanOrEqual(0);
-  expect(menuBounds!.y).toBeGreaterThanOrEqual(0);
-  expect(menuBounds!.x + menuBounds!.width).toBeLessThanOrEqual(1280);
-  expect(menuBounds!.y + menuBounds!.height).toBeLessThanOrEqual(800);
-
-  await menu.getByRole("menuitem", { name: "添加到 .gitignore" }).click();
+  await expect(page.locator(".scm-file-context-menu")).toHaveCount(0);
+  const rowActionButtons = fileRow.locator(".scm-row-actions button");
+  await expect(rowActionButtons).toHaveCount(3);
+  expect(await rowActionButtons.evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label")))).toEqual([
+    "暂存更改",
+    "添加到 .gitignore",
+    "放弃更改"
+  ]);
+  await fileRow.hover();
+  await fileRow.getByRole("button", { name: "添加到 .gitignore" }).click();
   await expect.poll(() => page.evaluate(() => Boolean((window as typeof window & { __gitignoreWrite?: unknown }).__gitignoreWrite))).toBe(true);
   const write = await page.evaluate(() => (window as typeof window & {
     __gitignoreWrite: { content: string; expectedRevision: string };

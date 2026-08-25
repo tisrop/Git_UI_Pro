@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Copy, FolderGit2, Minus, Moon, PanelLeftClose, PanelLeftOpen, Square, Sun, X } from "lucide-react";
+import { Check, ChevronDown, Copy, Minus, Moon, PanelLeftClose, PanelLeftOpen, Square, Sun, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { WindowState } from "../types/electron";
 import { AppUpdateControl } from "./AppUpdateControl";
@@ -146,7 +146,6 @@ export function AppChrome({
             aria-live="polite"
             title={currentProjectName}
           >
-            <FolderGit2 size={13} aria-hidden="true" />
             <span>{currentProjectName}</span>
           </div>
         ) : null}
