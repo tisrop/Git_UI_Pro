@@ -135,7 +135,7 @@ export interface ConflictResolutionInput {
 }
 
 export interface FilePreview {
-  type: "image" | "video";
+  type: "image" | "video" | "pdf" | "document" | "spreadsheet" | "presentation";
   mimeType: string;
   dataUrl: string;
   sizeBytes: number;

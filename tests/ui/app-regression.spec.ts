@@ -1,4 +1,6 @@
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import JSZip from "jszip";
+import * as XLSX from "xlsx";
 
 async function openApp(page: Page) {
   await page.goto("/");
@@ -10,6 +12,43 @@ async function openFirstWorktreeFile(page: Page) {
   await expect(fileRow).toBeVisible();
   await fileRow.click();
   await expect(page.locator(".editor-detail-panel:not(.empty)")).toBeVisible();
+}
+
+async function createWordPreviewDataUrl() {
+  const archive = new JSZip();
+  archive.file("[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`);
+  archive.file("_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`);
+  archive.file("word/document.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>Word 阅读预览</w:t></w:r></w:p>
+    <w:p><w:r><w:t>办公文档正文可以直接阅读。</w:t></w:r></w:p>
+    <w:sectPr/>
+  </w:body>
+</w:document>`);
+  const base64 = await archive.generateAsync({ type: "base64" });
+  return `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${base64}`;
+}
+
+async function createPresentationPreviewDataUrl() {
+  const archive = new JSZip();
+  archive.file("ppt/slides/slide1.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld><p:spTree><p:sp><p:txBody>
+    <a:p><a:r><a:t>演示文稿阅读预览</a:t></a:r></a:p>
+    <a:p><a:r><a:t>复杂动画交给系统应用，文字内容在这里快速查看。</a:t></a:r></a:p>
+  </p:txBody></p:sp></p:spTree></p:cSld>
+</p:sld>`);
+  const base64 = await archive.generateAsync({ type: "base64" });
+  return `data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64,${base64}`;
 }
 
 function parseOpaqueColor(value: string): [number, number, number] {
@@ -995,7 +1034,118 @@ test("打开提交文件时使用圆形加载状态且不闪现空 diff 提示",
 
   await page.evaluate(() => (window as typeof window & { __finishCommitDiff?: () => void }).__finishCommitDiff?.());
   await expect(loadingState).toBeHidden();
-  await expect(page.locator(".editor-diff-panel .diff-line")).toHaveCount(2);
+  await expect(page.locator(".markdown-document")).toContainText("新增内容");
+});
+
+test("Markdown 默认使用阅读视图并可切回源码差异", async ({ page }) => {
+  await page.goto("/");
+  await page.locator(".graph-commit-row").first().click();
+  await page.evaluate(() => {
+    window.gitUI = {
+      getCommitFilePreview: async () => null,
+      getCommitDiff: async () => [
+        { type: "context", oldLineNumber: 1, newLineNumber: 1, content: "# Markdown 阅读标题" },
+        { type: "context", oldLineNumber: 2, newLineNumber: 2, content: "" },
+        { type: "add", newLineNumber: 3, content: "- 第一项" },
+        { type: "add", newLineNumber: 4, content: "- 第二项" }
+      ]
+    } as unknown as typeof window.gitUI;
+  });
+
+  await page.locator(".graph-commit-file-row").filter({ hasText: "PRD.md" }).click();
+  await expect(page.locator(".markdown-document h1")).toHaveText("Markdown 阅读标题");
+  await expect(page.locator(".markdown-document li")).toHaveCount(2);
+  const readButton = page.getByRole("button", { name: "阅读", exact: true });
+  const sourceButton = page.getByRole("button", { name: "源码", exact: true });
+  await expect(readButton).toHaveAttribute("aria-pressed", "true");
+
+  await sourceButton.click();
+  await expect(sourceButton).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".editor-diff-panel .diff-line")).toHaveCount(4);
+
+  await readButton.click();
+  await expect(page.locator(".markdown-document h1")).toHaveText("Markdown 阅读标题");
+});
+
+test("Word 和表格二进制文件在右侧使用专用阅读器", async ({ page }) => {
+  const wordDataUrl = await createWordPreviewDataUrl();
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+    ["名称", "数量"],
+    ["预览能力", 6],
+    ["办公格式", "支持"]
+  ]), "能力清单");
+  const spreadsheetDataUrl = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${XLSX.write(workbook, { type: "base64", bookType: "xlsx" })}`;
+
+  await page.goto("/");
+  await page.locator(".graph-commit-row").first().click();
+  await page.evaluate(({ word, spreadsheet }) => {
+    window.gitUI = {
+      getCommitFilePreview: async (_repository, _hash, file) => file.path.endsWith(".md")
+        ? {
+            type: "document",
+            mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            dataUrl: word,
+            sizeBytes: word.length,
+            sourceDescription: "提交中的文件"
+          }
+        : {
+            type: "spreadsheet",
+            mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            dataUrl: spreadsheet,
+            sizeBytes: spreadsheet.length,
+            sourceDescription: "提交中的文件"
+          }
+    } as unknown as typeof window.gitUI;
+  }, { word: wordDataUrl, spreadsheet: spreadsheetDataUrl });
+
+  const prdFile = page.locator(".graph-commit-file-row").filter({ hasText: "PRD.md" });
+  const packageFile = page.locator(".graph-commit-file-row").filter({ hasText: "package.json" });
+  await prdFile.click();
+  await expect(page.locator(".word-document")).toContainText("Word 阅读预览");
+  await expect(page.locator(".editor-diff-panel .diff-line")).toHaveCount(0);
+
+  await packageFile.click();
+  await expect(page.getByRole("region", { name: "package.json 表格预览" })).toBeVisible();
+  await expect(page.locator(".spreadsheet-table")).toContainText("预览能力");
+  await expect(page.locator(".spreadsheet-table")).toContainText("办公格式");
+});
+
+test("PDF 和演示文稿在右侧使用专用阅读器", async ({ page }) => {
+  const pdfDataUrl = `data:application/pdf;base64,${Buffer.from("%PDF-1.4\n%%EOF", "utf8").toString("base64")}`;
+  const presentationDataUrl = await createPresentationPreviewDataUrl();
+
+  await page.goto("/");
+  await page.locator(".graph-commit-row").first().click();
+  await page.evaluate(({ pdf, presentation }) => {
+    window.gitUI = {
+      getCommitFilePreview: async (_repository, _hash, file) => file.path.endsWith(".md")
+        ? {
+            type: "pdf",
+            mimeType: "application/pdf",
+            dataUrl: pdf,
+            sizeBytes: pdf.length,
+            sourceDescription: "提交中的文件"
+          }
+        : {
+            type: "presentation",
+            mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            dataUrl: presentation,
+            sizeBytes: presentation.length,
+            sourceDescription: "提交中的文件"
+          }
+    } as unknown as typeof window.gitUI;
+  }, { pdf: pdfDataUrl, presentation: presentationDataUrl });
+
+  const prdFile = page.locator(".graph-commit-file-row").filter({ hasText: "PRD.md" });
+  const packageFile = page.locator(".graph-commit-file-row").filter({ hasText: "package.json" });
+  await prdFile.click();
+  await expect(page.locator(".pdf-preview-frame")).toBeVisible();
+  await expect(page.locator(".document-preview-meta")).toContainText("内置 PDF 阅读器");
+
+  await packageFile.click();
+  await expect(page.locator(".presentation-slide-card")).toHaveCount(1);
+  await expect(page.locator(".presentation-slide-card")).toContainText("演示文稿阅读预览");
 });
 
 test("快速切换提交文件时立即响应最后一次选择且旧请求不会覆盖", async ({ page }) => {

@@ -102,7 +102,7 @@ export interface ConflictResolutionInput {
 }
 
 export interface FilePreview {
-  type: "image" | "video";
+  type: "image" | "video" | "pdf" | "document" | "spreadsheet" | "presentation";
   mimeType: string;
   dataUrl: string;
   sizeBytes: number;
@@ -479,6 +479,7 @@ const readOnlyGitCommands = new Set([
 const maxEditableConflictBytes = 2 * 1024 * 1024;
 const maxPreviewImageBytes = 25 * 1024 * 1024;
 const maxPreviewVideoBytes = 80 * 1024 * 1024;
+const maxPreviewOfficeBytes = 40 * 1024 * 1024;
 
 const graphColors = ["#51c2a9", "#7aa7ff", "#d69cff", "#f0c36b", "#ef6b73", "#8bd38b"];
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
@@ -1117,8 +1118,8 @@ export class GitService {
 
   async getCommitFilePreview(repositoryPath: RepositoryLocation, hash: string, file: ChangedFile): Promise<FilePreview | null> {
     const targetPath = file.status === "deleted" ? file.oldPath ?? file.path : file.path;
-    const media = previewMediaFromPath(targetPath);
-    if (!media) {
+    const previewDescriptor = previewFileFromPath(targetPath);
+    if (!previewDescriptor) {
       return null;
     }
 
@@ -1128,7 +1129,7 @@ export class GitService {
       return null;
     }
 
-    return createFilePreview(result, media, file.status === "deleted" ? "删除前版本" : "提交版本");
+    return createFilePreview(result, previewDescriptor, file.status === "deleted" ? "删除前版本" : "提交版本");
   }
 
   async getWorktree(repositoryPath: RepositoryLocation): Promise<WorktreeState> {
@@ -1238,28 +1239,28 @@ export class GitService {
 
   async getWorktreeFilePreview(repositoryPath: RepositoryLocation, file: ChangedFile): Promise<FilePreview | null> {
     const previewPath = file.status === "deleted" ? file.oldPath ?? file.path : file.path;
-    const media = previewMediaFromPath(previewPath);
-    if (!media) {
+    const previewDescriptor = previewFileFromPath(previewPath);
+    if (!previewDescriptor) {
       return null;
     }
 
     if (file.staged) {
       const indexBlob = file.status === "deleted" ? null : await this.readGitBlob(repositoryPath, "", file.path, true);
       if (indexBlob) {
-        return createFilePreview(indexBlob, media, "暂存版本");
+        return createFilePreview(indexBlob, previewDescriptor, "暂存版本");
       }
     }
 
     if (file.status !== "deleted") {
       const worktreeBlob = await this.readRepositoryFile(repositoryPath, file.path);
       if (worktreeBlob) {
-        return createFilePreview(worktreeBlob, media, file.staged ? "工作区版本" : "当前工作区版本");
+        return createFilePreview(worktreeBlob, previewDescriptor, file.staged ? "工作区版本" : "当前工作区版本");
       }
     }
 
     const previousBlob = await this.readGitBlob(repositoryPath, "HEAD", file.oldPath ?? file.path);
     if (previousBlob) {
-      return createFilePreview(previousBlob, media, "删除前版本");
+      return createFilePreview(previousBlob, previewDescriptor, "删除前版本");
     }
 
     return null;
@@ -4676,23 +4677,27 @@ function compareHistoryRefs(left: GitHistoryRef, right: GitHistoryRef): number {
   return left.name.localeCompare(right.name, "zh-CN", { sensitivity: "base" });
 }
 
-function createFilePreview(content: Buffer, media: { type: FilePreview["type"]; mimeType: string }, sourceDescription: string): FilePreview {
-  const maxBytes = media.type === "video" ? maxPreviewVideoBytes : maxPreviewImageBytes;
+function createFilePreview(content: Buffer, descriptor: { type: FilePreview["type"]; mimeType: string }, sourceDescription: string): FilePreview {
+  const maxBytes = descriptor.type === "video"
+    ? maxPreviewVideoBytes
+    : descriptor.type === "image"
+      ? maxPreviewImageBytes
+      : maxPreviewOfficeBytes;
   if (content.byteLength > maxBytes) {
-    const label = media.type === "video" ? "视频" : "图片";
+    const label = previewTypeLabel(descriptor.type);
     throw new Error(`${label}文件过大，暂不在查看区预览。`);
   }
 
   return {
-    type: media.type,
-    mimeType: media.mimeType,
-    dataUrl: `data:${media.mimeType};base64,${content.toString("base64")}`,
+    type: descriptor.type,
+    mimeType: descriptor.mimeType,
+    dataUrl: `data:${descriptor.mimeType};base64,${content.toString("base64")}`,
     sizeBytes: content.byteLength,
     sourceDescription
   };
 }
 
-function previewMediaFromPath(filePath: string): { type: FilePreview["type"]; mimeType: string } | undefined {
+function previewFileFromPath(filePath: string): { type: FilePreview["type"]; mimeType: string } | undefined {
   const extension = filePath.split(/[\\/]/).pop()?.split(".").pop()?.toLowerCase();
   switch (extension) {
     case "png":
@@ -4732,8 +4737,49 @@ function previewMediaFromPath(filePath: string): { type: FilePreview["type"]; mi
       return { type: "video", mimeType: "video/x-matroska" };
     case "avi":
       return { type: "video", mimeType: "video/x-msvideo" };
+    case "pdf":
+      return { type: "pdf", mimeType: "application/pdf" };
+    case "docx":
+      return { type: "document", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" };
+    case "docm":
+      return { type: "document", mimeType: "application/vnd.ms-word.document.macroenabled.12" };
+    case "odt":
+      return { type: "document", mimeType: "application/vnd.oasis.opendocument.text" };
+    case "xlsx":
+      return { type: "spreadsheet", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" };
+    case "xlsm":
+      return { type: "spreadsheet", mimeType: "application/vnd.ms-excel.sheet.macroenabled.12" };
+    case "xlsb":
+      return { type: "spreadsheet", mimeType: "application/vnd.ms-excel.sheet.binary.macroenabled.12" };
+    case "xls":
+      return { type: "spreadsheet", mimeType: "application/vnd.ms-excel" };
+    case "ods":
+      return { type: "spreadsheet", mimeType: "application/vnd.oasis.opendocument.spreadsheet" };
+    case "pptx":
+      return { type: "presentation", mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation" };
+    case "pptm":
+      return { type: "presentation", mimeType: "application/vnd.ms-powerpoint.presentation.macroenabled.12" };
+    case "odp":
+      return { type: "presentation", mimeType: "application/vnd.oasis.opendocument.presentation" };
     default:
       return undefined;
+  }
+}
+
+function previewTypeLabel(type: FilePreview["type"]): string {
+  switch (type) {
+    case "image":
+      return "图片";
+    case "video":
+      return "视频";
+    case "pdf":
+      return "PDF";
+    case "document":
+      return "文档";
+    case "spreadsheet":
+      return "表格";
+    case "presentation":
+      return "演示文稿";
   }
 }
 

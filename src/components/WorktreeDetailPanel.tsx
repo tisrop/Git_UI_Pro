@@ -10,7 +10,8 @@ import {
   type UIEvent as ReactUIEvent,
   type WheelEvent as ReactWheelEvent
 } from "react";
-import { AlertTriangle, Check, Copy, ExternalLink, FileText, FolderOpen, GitMerge, Maximize2, RefreshCw, RotateCcw, Save, X, ZoomIn, ZoomOut } from "lucide-react";
+import { AlertTriangle, BookOpen, Check, Code2, Copy, ExternalLink, FileText, FolderOpen, GitMerge, Maximize2, RefreshCw, RotateCcw, Save, Table2, X, ZoomIn, ZoomOut } from "lucide-react";
+import { BinaryDocumentPreview, TextDocumentPreview, textReaderKind } from "./DocumentPreview";
 import { DiffMinimap, type DiffMinimapLine } from "./DiffMinimap";
 import { PathTooltip } from "./PathTooltip";
 import type { ChangedFile, ConflictFileDetails, ConflictResolutionInput, DiffLine, FilePreview } from "../types/domain";
@@ -90,8 +91,13 @@ export function WorktreeDetailPanel({
   const splitContentWidthCacheRef = useRef<{ rows: SplitDiffRow[]; styleKey: string; width: number }>();
   const prefersSplitDiff = useSplitDiffLayout();
   const activeDiffLines = activeTab?.diffLines ?? [];
-  const mediaPreview = activeTab?.preview;
-  const showDiffMinimap = !mediaPreview && activeDiffLines.some((line) => line.type !== "context");
+  const filePreview = activeTab?.preview ?? undefined;
+  const mediaPreview = isMediaFilePreview(filePreview) ? filePreview : undefined;
+  const binaryDocumentPreview = filePreview && !mediaPreview ? filePreview : undefined;
+  const activeTextReaderKind = activeTab && !filePreview ? textReaderKind(activeTab.file.path) : undefined;
+  const [sourceViewTabIds, setSourceViewTabIds] = useState<Set<string>>(() => new Set());
+  const showTextReader = Boolean(!filePreview && activeTab && activeTextReaderKind && !sourceViewTabIds.has(activeTab.id));
+  const showDiffMinimap = !filePreview && !showTextReader && activeDiffLines.some((line) => line.type !== "context");
   const splitDiffRows = useMemo(() => buildSplitDiffRows(activeDiffLines), [activeDiffLines]);
   const [splitMaxScroll, setSplitMaxScroll] = useState(0);
   const [splitScrollX, setSplitScrollX] = useState(0);
@@ -102,8 +108,8 @@ export function WorktreeDetailPanel({
   const splitDiffEnabled = diffViewMode ? diffViewMode === "split" : prefersSplitDiff;
   const splitDiffAvailableWidth = Math.max(0, diffPanelWidth - (showDiffMinimap ? DIFF_MINIMAP_WIDTH : 0));
   const splitDiffHasRoom = diffPanelWidth === 0 || splitDiffAvailableWidth >= MIN_SPLIT_DIFF_WIDTH;
-  const showSplitDiff = Boolean(!mediaPreview && splitDiffEnabled && splitDiffHasRoom && activeTab && canUseSplitDiff(activeTab.file.status) && splitDiffRows.length > 0);
-  const virtualRowCount = mediaPreview ? 0 : showSplitDiff ? splitDiffRows.length : activeDiffLines.length;
+  const showSplitDiff = Boolean(!filePreview && !showTextReader && splitDiffEnabled && splitDiffHasRoom && activeTab && canUseSplitDiff(activeTab.file.status) && splitDiffRows.length > 0);
+  const virtualRowCount = filePreview || showTextReader ? 0 : showSplitDiff ? splitDiffRows.length : activeDiffLines.length;
   const firstDiffIndex = useMemo(
     () => showSplitDiff ? splitDiffRows.findIndex((row) => row.type !== "context") : activeDiffLines.findIndex((line) => line.type !== "context"),
     [activeDiffLines, showSplitDiff, splitDiffRows]
@@ -312,6 +318,21 @@ export function WorktreeDetailPanel({
     window.requestAnimationFrame(() => editorTabRefs.current.get(nextTab.id)?.focus());
   }
 
+  function setActiveTextView(sourceView: boolean) {
+    if (!activeTab) {
+      return;
+    }
+    setSourceViewTabIds((current) => {
+      const next = new Set(current);
+      if (sourceView) {
+        next.add(activeTab.id);
+      } else {
+        next.delete(activeTab.id);
+      }
+      return next;
+    });
+  }
+
   if (!activeTab) {
     return (
       <aside className="detail-panel worktree-detail-panel editor-detail-panel empty">
@@ -371,6 +392,32 @@ export function WorktreeDetailPanel({
             </div>
           ))}
         </div>
+        {activeTextReaderKind ? (
+          <div className="editor-view-toggle" role="group" aria-label={`${activeTextReaderKind === "markdown" ? "Markdown" : "表格"}查看方式`}>
+            <button
+              type="button"
+              className={showTextReader ? "active" : ""}
+              aria-label={activeTextReaderKind === "markdown" ? "阅读" : "表格"}
+              title={activeTextReaderKind === "markdown" ? "阅读视图" : "表格视图"}
+              aria-pressed={showTextReader}
+              onClick={() => setActiveTextView(false)}
+            >
+              {activeTextReaderKind === "markdown" ? <BookOpen size={13} /> : <Table2 size={13} />}
+              <span>{activeTextReaderKind === "markdown" ? "阅读" : "表格"}</span>
+            </button>
+            <button
+              type="button"
+              className={!showTextReader ? "active" : ""}
+              aria-label="源码"
+              title="源码差异"
+              aria-pressed={!showTextReader}
+              onClick={() => setActiveTextView(true)}
+            >
+              <Code2 size={13} />
+              <span>源码</span>
+            </button>
+          </div>
+        ) : null}
         <div className={`editor-file-actions ${desktopFileActionsEnabled ? "desktop-actions-enabled" : ""}`} role="group" aria-label="文件操作">
           <PathTooltip content="复制绝对路径" className="editor-action-tooltip">
             <button type="button" className="icon-button compact-icon" aria-label="复制绝对路径" onClick={() => void navigator.clipboard.writeText(activeAbsolutePath)}>
@@ -438,12 +485,16 @@ export function WorktreeDetailPanel({
         ) : (
         <section
           id={diffScrollContainerId}
-          className={`diff-panel editor-diff-panel ${showSplitDiff ? "split-mode" : ""} ${diffWrap ? "wrap-lines" : ""} ${mediaPreview ? "media-mode" : ""} ${showDiffMinimap ? "has-minimap" : ""}`}
+          className={`diff-panel editor-diff-panel ${showSplitDiff ? "split-mode" : ""} ${diffWrap ? "wrap-lines" : ""} ${filePreview ? "preview-mode" : ""} ${mediaPreview ? "media-mode" : ""} ${binaryDocumentPreview || showTextReader ? "document-mode" : ""} ${showDiffMinimap ? "has-minimap" : ""}`}
           ref={diffPanelRef}
           onScroll={handleDiffPanelScroll}
         >
           {mediaPreview ? (
             <MediaPreview preview={mediaPreview} filePath={file.path} />
+          ) : binaryDocumentPreview ? (
+            <BinaryDocumentPreview preview={binaryDocumentPreview} filePath={file.path} />
+          ) : showTextReader ? (
+            <TextDocumentPreview filePath={file.path} status={file.status} diffLines={diffLines} />
           ) : showSplitDiff ? (
             <div className="split-diff-grid" role="table" aria-label="左右文件对比" ref={splitDiffRef}>
               <div className="split-diff-header" role="row">
@@ -783,7 +834,13 @@ function joinConflictSides(current: string, incoming: string): string {
   return `${current}${current.endsWith("\n") || current.endsWith("\r") ? "" : "\n"}${incoming}`;
 }
 
-function MediaPreview({ preview, filePath }: { preview: FilePreview; filePath: string }) {
+type MediaFilePreview = FilePreview & { type: "image" | "video" };
+
+function isMediaFilePreview(preview?: FilePreview): preview is MediaFilePreview {
+  return preview?.type === "image" || preview?.type === "video";
+}
+
+function MediaPreview({ preview, filePath }: { preview: MediaFilePreview; filePath: string }) {
   const fileName = filePath.split(/[\\/]/).filter(Boolean).at(-1) ?? filePath;
   const stageRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null);

@@ -54,6 +54,8 @@ async function createWindow(): Promise<void> {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      // Enables Chromium's built-in PDF viewer for the read-only preview pane.
+      plugins: true,
       // Some Windows custom install paths fail to start Electron's renderer sandbox.
       sandbox: false
     }
