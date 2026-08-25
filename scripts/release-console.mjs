@@ -565,6 +565,34 @@ async function runNpm(args, options = {}) {
   });
 }
 
+export async function ensureReleaseDependencies(options = {}) {
+  const runCommand = options.runCommand ?? runNpm;
+  const job = options.job;
+  const dependencyCheck = await runCommand(["ls", "--depth=0"], {
+    job,
+    allowFailure: true,
+    timeoutMs: 2 * 60_000
+  });
+  if (dependencyCheck.code === 0 && !dependencyCheck.timedOut) {
+    if (job) {
+      addLog(job, "success", "Node.js 依赖与 package-lock.json 一致");
+    }
+    return { installed: false };
+  }
+
+  if (job) {
+    addLog(job, "warning", "检测到 node_modules 缺失或版本不一致，正在依据 package-lock.json 自动重建依赖");
+  }
+  await runCommand(["ci", "--no-audit", "--no-fund"], {
+    job,
+    timeoutMs: 15 * 60_000
+  });
+  if (job) {
+    addLog(job, "success", "Node.js 依赖已自动重建，继续执行 Windows 打包");
+  }
+  return { installed: true };
+}
+
 async function gitOutput(args, options = {}) {
   const result = await runGit(args);
   return options.raw ? result.stdout : result.stdout.trim();
@@ -1877,6 +1905,7 @@ async function executeRelease(job, options = {}) {
     const status = await collectStatus();
     job.payload = validateReleasePayload(job.payload, status);
     job.releaseContext = await getReleaseContext(status, job);
+    await ensureReleaseDependencies({ job });
     setStage(job, "preflight", "completed");
 
     setStage(job, "version", "running");

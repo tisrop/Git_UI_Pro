@@ -10,6 +10,7 @@ import {
   compareVersions,
   createGitHubProxyTransport,
   detectProvider,
+  ensureReleaseDependencies,
   expectedWindowsUpdateArtifacts,
   isTransientGitIndexLockFailure,
   isTransientGitNetworkFailure,
@@ -42,6 +43,39 @@ test("解析并推荐稳定版本号", () => {
   });
   assert.ok(compareVersions("0.2.0", "0.1.9") > 0);
   assert.ok(compareVersions("1.0.0", "0.99.99") > 0);
+});
+
+test("发布前依赖完整时跳过重复安装", async () => {
+  const calls = [];
+  const result = await ensureReleaseDependencies({
+    runCommand: async (args, options) => {
+      calls.push({ args, options });
+      return { code: 0, stdout: "", stderr: "", timedOut: false };
+    }
+  });
+
+  assert.deepEqual(result, { installed: false });
+  assert.deepEqual(calls.map((call) => call.args), [["ls", "--depth=0"]]);
+  assert.equal(calls[0].options.allowFailure, true);
+});
+
+test("发布前依赖缺失时根据锁文件自动重建", async () => {
+  const calls = [];
+  const result = await ensureReleaseDependencies({
+    runCommand: async (args, options) => {
+      calls.push({ args, options });
+      return args[0] === "ls"
+        ? { code: 1, stdout: "", stderr: "missing", timedOut: false }
+        : { code: 0, stdout: "", stderr: "", timedOut: false };
+    }
+  });
+
+  assert.deepEqual(result, { installed: true });
+  assert.deepEqual(calls.map((call) => call.args), [
+    ["ls", "--depth=0"],
+    ["ci", "--no-audit", "--no-fund"]
+  ]);
+  assert.equal(calls[1].options.timeoutMs, 15 * 60_000);
 });
 
 test("解析包含暂存、未暂存、未跟踪和重命名的工作区状态", () => {
