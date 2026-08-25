@@ -32,6 +32,7 @@ import {
   waitForGitHubReleaseReady
 } from "./release-console.mjs";
 import { collectWindowsUpdateFiles, createGiteeUpdateManifest, syncGiteeRelease } from "./sync-gitee-release.mjs";
+import { electronRuntimePaths, ensureElectronRuntime, isElectronRuntimeReady } from "./ensure-electron-runtime.mjs";
 
 test("解析并推荐稳定版本号", () => {
   assert.deepEqual(parseVersion("0.1.5"), { major: 0, minor: 1, patch: 5, text: "0.1.5" });
@@ -56,8 +57,12 @@ test("发布前依赖完整时跳过重复安装", async () => {
   });
 
   assert.deepEqual(result, { installed: false });
-  assert.deepEqual(calls.map((call) => call.args), [["ls", "--depth=0"]]);
+  assert.deepEqual(calls.map((call) => call.args), [
+    ["ls", "--depth=0"],
+    ["run", "ensure:electron"]
+  ]);
   assert.equal(calls[0].options.allowFailure, true);
+  assert.equal(calls[1].options.timeoutMs, 10 * 60_000);
 });
 
 test("发布前依赖缺失时根据锁文件自动重建", async () => {
@@ -74,9 +79,43 @@ test("发布前依赖缺失时根据锁文件自动重建", async () => {
   assert.deepEqual(result, { installed: true });
   assert.deepEqual(calls.map((call) => call.args), [
     ["ls", "--depth=0"],
-    ["ci", "--no-audit", "--no-fund"]
+    ["ci", "--no-audit", "--no-fund"],
+    ["run", "ensure:electron"]
   ]);
   assert.equal(calls[1].options.timeoutMs, 15 * 60_000);
+});
+
+test("Electron npm 包存在但 runtime 缺失时自动执行官方安装脚本恢复", async () => {
+  const rootDir = path.join("C:\\", "release-test");
+  const runtimePaths = electronRuntimePaths({ rootDir, platform: "win32" });
+  const files = new Set([runtimePaths.installScript, runtimePaths.packageJson]);
+  const contents = new Map([[runtimePaths.packageJson, JSON.stringify({ version: "29.4.6" })]]);
+  let installerPath = "";
+
+  assert.equal(isElectronRuntimeReady({
+    rootDir,
+    platform: "win32",
+    fileExists: (filePath) => files.has(filePath),
+    readText: (filePath) => contents.get(filePath) ?? ""
+  }), false);
+
+  const result = await ensureElectronRuntime({
+    rootDir,
+    platform: "win32",
+    fileExists: (filePath) => files.has(filePath),
+    readText: (filePath) => contents.get(filePath) ?? "",
+    runInstaller: async (filePath) => {
+      installerPath = filePath;
+      files.add(runtimePaths.pathFile);
+      files.add(runtimePaths.versionFile);
+      files.add(runtimePaths.executable);
+      contents.set(runtimePaths.pathFile, "electron.exe");
+      contents.set(runtimePaths.versionFile, "v29.4.6");
+    }
+  });
+
+  assert.deepEqual(result, { repaired: true });
+  assert.equal(installerPath, runtimePaths.installScript);
 });
 
 test("解析包含暂存、未暂存、未跟踪和重命名的工作区状态", () => {

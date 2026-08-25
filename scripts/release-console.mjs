@@ -594,6 +594,7 @@ async function runNpm(args, options = {}) {
 export async function ensureReleaseDependencies(options = {}) {
   const runCommand = options.runCommand ?? runNpm;
   const job = options.job;
+  let installed = false;
   const dependencyCheck = await runCommand(["ls", "--depth=0"], {
     job,
     allowFailure: true,
@@ -603,20 +604,31 @@ export async function ensureReleaseDependencies(options = {}) {
     if (job) {
       addLog(job, "success", "Node.js 依赖与 package-lock.json 一致");
     }
-    return { installed: false };
+  } else {
+    if (job) {
+      addLog(job, "warning", "检测到 node_modules 缺失或版本不一致，正在依据 package-lock.json 自动重建依赖");
+    }
+    await runCommand(["ci", "--no-audit", "--no-fund"], {
+      job,
+      timeoutMs: 15 * 60_000
+    });
+    installed = true;
+    if (job) {
+      addLog(job, "success", "Node.js 依赖已自动重建");
+    }
   }
 
   if (job) {
-    addLog(job, "warning", "检测到 node_modules 缺失或版本不一致，正在依据 package-lock.json 自动重建依赖");
+    addLog(job, "info", "正在校验 Electron runtime");
   }
-  await runCommand(["ci", "--no-audit", "--no-fund"], {
+  await runCommand(["run", "ensure:electron"], {
     job,
-    timeoutMs: 15 * 60_000
+    timeoutMs: 10 * 60_000
   });
   if (job) {
-    addLog(job, "success", "Node.js 依赖已自动重建，继续执行 Windows 打包");
+    addLog(job, "success", "Electron runtime 完整，继续执行 Windows 打包");
   }
-  return { installed: true };
+  return { installed };
 }
 
 async function gitOutput(args, options = {}) {

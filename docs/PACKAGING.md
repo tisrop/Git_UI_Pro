@@ -93,6 +93,8 @@ Portable 默认把项目列表、分组、偏好设置、终端历史和更新�
 
 `build.electronDist` 指向 `node_modules/electron/dist`，打包时复用本地已安装的 Electron runtime，避免发布验证阶段重复从 GitHub 下载 Electron。
 
+所有 `dist*` 脚本会先执行 `npm run ensure:electron`，校验 Electron 的版本文件、`path.txt` 和当前平台可执行文件。如果 npm 包存在但 runtime 下载不完整，会自动重新运行 `node_modules/electron/install.js`；发布控制台也会在修改版本号前完成同一项预检，避免构建到打包阶段才失败。
+
 首次生成 NSIS 安装包时，electron-builder 仍可能需要下载 NSIS 工具链并缓存到本机；缓存完成后后续构建会复用。
 
 ## GitHub Actions 多平台构建
