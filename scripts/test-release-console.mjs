@@ -12,6 +12,7 @@ import {
   detectProvider,
   ensureReleaseDependencies,
   expectedWindowsUpdateArtifacts,
+  formatProcessFailureDetail,
   isTransientGitIndexLockFailure,
   isTransientGitNetworkFailure,
   mergeReleaseNotes,
@@ -327,6 +328,36 @@ test("命令超时会终止包含子进程的进程树", { timeout: 10_000 }, as
 
   assert.equal(result.timedOut, true);
   assert.ok(Date.now() - startedAt < 5_000, "进程树应在超时后及时退出");
+});
+
+test("命令失败不会再让标准错误中的警告遮住真正错误", async () => {
+  const failingScript = [
+    'process.stdout.write("electron-builder actual failure\\n");',
+    'process.stderr.write("Vite warning\\n");',
+    "process.exit(7);"
+  ].join("");
+
+  await assert.rejects(
+    runProcess(process.execPath, ["-e", failingScript]),
+    (error) => {
+      assert.match(error.message, /标准输出（末尾）：\nelectron-builder actual failure/);
+      assert.match(error.message, /标准错误（末尾）：\nVite warning/);
+      assert.match(error.message, /退出码 7/);
+      return true;
+    }
+  );
+});
+
+test("命令失败摘要限制每路输出行数", () => {
+  const detail = formatProcessFailureDetail({
+    code: 1,
+    stdout: "line 1\nline 2\nline 3",
+    stderr: "",
+    timedOut: false
+  }, { maxLinesPerStream: 2 });
+
+  assert.doesNotMatch(detail, /line 1/);
+  assert.match(detail, /\[前 1 行已省略\]\nline 2\nline 3/);
 });
 
 test("Windows 通过 Node 执行 npm CLI，避免直接 spawn npm.cmd", () => {

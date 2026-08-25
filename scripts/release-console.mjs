@@ -341,6 +341,34 @@ function commandLabel(command, args) {
   return [path.basename(command).replace(/\.cmd$/i, ""), ...args].map(quoteArgument).join(" ");
 }
 
+function tailProcessOutput(value, maxLines) {
+  const lines = stripAnsi(value).trim().split(/\r?\n/);
+  if (lines.length <= maxLines) {
+    return lines.join("\n");
+  }
+
+  return `[前 ${lines.length - maxLines} 行已省略]\n${lines.slice(-maxLines).join("\n")}`;
+}
+
+export function formatProcessFailureDetail(result, options = {}) {
+  const { timeoutMs = 0, maxLinesPerStream = 40 } = options;
+  if (result.timedOut) {
+    return `命令执行超过 ${Math.round(timeoutMs / 1_000)} 秒`;
+  }
+
+  const stdout = result.stdout.trim();
+  const stderr = result.stderr.trim();
+  const sections = [];
+  if (stdout) {
+    sections.push(`标准输出（末尾）：\n${tailProcessOutput(stdout, maxLinesPerStream)}`);
+  }
+  if (stderr) {
+    sections.push(`标准错误（末尾）：\n${tailProcessOutput(stderr, maxLinesPerStream)}`);
+  }
+  sections.push(`退出码 ${result.code}`);
+  return sections.join("\n\n");
+}
+
 export function isTransientGitNetworkFailure(output) {
   const detail = String(output);
   if (/(?:authentication failed|repository not found|permission denied|could not read username|couldn't find remote ref|http (?:401|403)|ssl certificate problem|certificate (?:verify|validation) failed|certificate has expired|sec_e_untrusted_root)/i.test(detail)) {
@@ -459,9 +487,7 @@ export async function runProcess(command, args, options = {}) {
         return;
       }
 
-      const detail = result.timedOut
-        ? `命令执行超过 ${Math.round(timeoutMs / 1_000)} 秒`
-        : result.stderr.trim() || result.stdout.trim() || `退出码 ${result.code}`;
+      const detail = formatProcessFailureDetail(result, { timeoutMs });
       reject(new Error(`${commandLabel(displayCommand, displayArgs)} 执行失败：${detail}`));
     });
 
