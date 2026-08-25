@@ -404,13 +404,10 @@ test("项目栏头部使用单行等尺寸图标且搜索可展开", async ({ pa
   await expect.poll(async () => searchControl.evaluate((element) => element.getBoundingClientRect().width)).toBeLessThanOrEqual(44);
 });
 
-test("收起项目栏后标题栏居中显示当前项目名称", async ({ page }) => {
+test("标题栏常驻居中显示当前项目名称", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
   await expect(page.locator(".project-rail-item.active")).toBeVisible();
-  await expect(page.locator(".app-chrome-current-project")).toHaveCount(0);
-
-  await page.getByRole("button", { name: "收起项目栏" }).click();
   const currentProject = page.getByLabel("当前项目：Git UI Pro");
   await expect(currentProject).toBeVisible();
   await expect(currentProject).toHaveText("Git UI Pro");
@@ -450,11 +447,13 @@ test("收起项目栏后标题栏居中显示当前项目名称", async ({ page 
   expect(metrics.boxShadow).toBe("none");
   expect(metrics.paddingLeft).toBe("0px");
   expect(metrics.fontSize).toBe(13);
-  expect(metrics.fontWeight).toBe("500");
+  expect(metrics.fontWeight).toBe("700");
   expect(metrics.lineHeight).toBeGreaterThanOrEqual(metrics.fontSize * 1.4);
 
+  await page.getByRole("button", { name: "收起项目栏" }).click();
+  await expect(currentProject).toBeVisible();
   await page.getByRole("button", { name: "展开项目栏" }).click();
-  await expect(currentProject).toHaveCount(0);
+  await expect(currentProject).toBeVisible();
 });
 
 test("未跟踪文件通过行内图标添加到 gitignore 并刷新更改列表", async ({ page }) => {
@@ -991,6 +990,55 @@ test("打开提交文件时使用圆形加载状态且不闪现空 diff 提示",
   await expect(page.locator(".editor-diff-panel .diff-line")).toHaveCount(2);
 });
 
+test("切换回已查看的提交文件时复用缓存", async ({ page }) => {
+  await page.goto("/");
+  await page.locator(".graph-commit-row").first().click();
+
+  const prdFile = page.locator(".graph-commit-file-row").filter({ hasText: "PRD.md" });
+  const packageFile = page.locator(".graph-commit-file-row").filter({ hasText: "package.json" });
+  await expect(prdFile).toBeVisible();
+  await expect(packageFile).toBeVisible();
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __commitPreviewCalls?: string[];
+      __commitDiffCalls?: string[];
+    };
+    testWindow.__commitPreviewCalls = [];
+    testWindow.__commitDiffCalls = [];
+    window.gitUI = {
+      getCommitFilePreview: async (_repository, _hash, file) => {
+        testWindow.__commitPreviewCalls!.push(file.path);
+        return null;
+      },
+      getCommitDiff: async (_repository, _hash, filePath) => {
+        testWindow.__commitDiffCalls!.push(filePath ?? "");
+        return [{ type: "context", oldLineNumber: 1, newLineNumber: 1, content: `缓存 ${filePath}` }];
+      }
+    } as unknown as typeof window.gitUI;
+  });
+
+  await prdFile.click();
+  await expect(page.getByText("缓存 docs/PRD.md", { exact: true })).toBeVisible();
+  await packageFile.click();
+  await expect(page.getByText("缓存 package.json", { exact: true })).toBeVisible();
+  await prdFile.click();
+  await expect(page.getByText("缓存 docs/PRD.md", { exact: true })).toBeVisible();
+  await expect(page.getByRole("status", { name: "正在加载文件对比：docs/PRD.md" })).toBeHidden();
+
+  const calls = await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __commitPreviewCalls?: string[];
+      __commitDiffCalls?: string[];
+    };
+    return {
+      previews: testWindow.__commitPreviewCalls,
+      diffs: testWindow.__commitDiffCalls
+    };
+  });
+  expect(calls.previews).toEqual(["docs/PRD.md", "package.json"]);
+  expect(calls.diffs).toEqual(["docs/PRD.md", "package.json"]);
+});
+
 test("提交变更文件默认使用可折叠树形视图", async ({ page }) => {
   await page.goto("/");
   const firstCommit = page.locator(".graph-commit-row").first();
@@ -1024,17 +1072,22 @@ test("提交文件列表突出显示当前预览文件", async ({ page }) => {
 
   const selectedVisual = await changedFile.evaluate((element) => {
     const style = getComputedStyle(element, "::after");
+    const row = element.getBoundingClientRect();
+    const commitRow = element.closest(".graph-commit-entry")!.querySelector<HTMLElement>(".graph-commit-row")!.getBoundingClientRect();
     return {
       backgroundColor: style.backgroundColor,
       borderLeftColor: style.borderLeftColor,
       borderLeftWidth: style.borderLeftWidth,
-      boxShadow: style.boxShadow
+      boxShadow: style.boxShadow,
+      rowTop: row.top,
+      commitRowBottom: commitRow.bottom
     };
   });
   expect(selectedVisual.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
-  expect(selectedVisual.borderLeftWidth).toBe("1px");
+  expect(Number.parseFloat(selectedVisual.borderLeftWidth)).toBeGreaterThan(0);
   expect(selectedVisual.borderLeftColor).not.toBe("rgba(0, 0, 0, 0)");
-  expect(selectedVisual.boxShadow).not.toBe("none");
+  expect(selectedVisual.boxShadow).not.toContain("inset");
+  expect(selectedVisual.rowTop - selectedVisual.commitRowBottom).toBeGreaterThanOrEqual(2);
 });
 
 test("长提交悬浮详情在小窗口内滚动而不越界", async ({ page }) => {

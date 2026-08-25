@@ -139,7 +139,7 @@ export function AppChrome({
           </div>
           <AppUpdateControl />
         </div>
-        {sidebarCollapsed && currentProjectName ? (
+        {currentProjectName ? (
           <div
             className="app-chrome-current-project"
             aria-label={`当前项目：${currentProjectName}`}

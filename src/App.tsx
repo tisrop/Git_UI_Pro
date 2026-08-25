@@ -81,6 +81,7 @@ const PROJECT_DATA_CACHE_TTL_MS = 20_000;
 const GRAPH_HISTORY_CACHE_TTL_MS = 20_000;
 const PROJECT_DATA_CACHE_MAX_ENTRIES = 12;
 const GRAPH_HISTORY_CACHE_MAX_ENTRIES = 24;
+const COMMIT_FILE_CACHE_MAX_ENTRIES = 32;
 const RESET_OPERATION_TIMEOUT_MS = 45_000;
 const GIT_DOWNLOAD_URL = "https://git-scm.com/downloads";
 const HISTORY_PAGE_SIZE = 150;
@@ -122,6 +123,7 @@ type GraphHistorySnapshot = {
   historyNextSkip: number;
   loadedAt: number;
 };
+type CommitFileCacheEntry = Pick<WorktreeEditorTab, "file" | "diffLines" | "preview">;
 type AdvancedHistoryQuery = Pick<GitHistoryQuery, "search" | "author" | "after" | "before" | "path">;
 type GitDependencyState =
   | { status: "checking" }
@@ -208,6 +210,8 @@ export function App() {
   const projectLoadRequestRef = useRef(0);
   const projectDataCacheRef = useRef(new Map<string, ProjectDataSnapshot>());
   const graphHistoryCacheRef = useRef(new Map<string, GraphHistorySnapshot>());
+  const commitFileCacheRef = useRef(new Map<string, CommitFileCacheEntry>());
+  const pendingCommitFileLoadsRef = useRef(new Map<string, Promise<CommitFileCacheEntry>>());
   const pendingConfirmResolveRef = useRef<((confirmed: boolean) => void) | undefined>();
   const detailStackRef = useRef<HTMLElement | null>(null);
   const restoreConsoleHeightRef = useRef(DEFAULT_CONSOLE_HEIGHT);
@@ -1433,12 +1437,40 @@ export function App() {
       return;
     }
 
+    const project = selectedProject;
     const tabId = commitFileTabId(commit.hash, file.path);
     const existingTab = worktreeTabs.find((tab) => tab.id === tabId);
-    if (existingTab && pinned && !forceReload) {
-      setWorktreeTabs((current) => current.map((tab) => (tab.id === tabId ? { ...tab, pinned: true } : tab)));
+    if (existingTab && !existingTab.loadError && !forceReload) {
+      if (pinned && !existingTab.pinned) {
+        setWorktreeTabs((current) => current.map((tab) => (tab.id === tabId ? { ...tab, pinned: true } : tab)));
+      }
       setActiveWorktreeTabId(tabId);
       return;
+    }
+
+    const cacheKey = commitFileCacheKey(project.id, commit.hash, file.path);
+    if (!forceReload) {
+      const cached = commitFileCacheRef.current.get(cacheKey);
+      if (cached) {
+        setBoundedCache(commitFileCacheRef.current, cacheKey, cached, COMMIT_FILE_CACHE_MAX_ENTRIES);
+        const cachedTab: WorktreeEditorTab = {
+          id: tabId,
+          file: cached.file,
+          diffLines: cached.diffLines,
+          preview: cached.preview,
+          pinned,
+          sourceType: "commit",
+          commitHash: commit.hash,
+          sourceLabel: `提交 ${commit.shortHash}`,
+          subtitle: commit.subject,
+          loadError: undefined,
+          loading: false
+        };
+        setWorktreeTabs((current) => upsertWorktreeTab(current, cachedTab, pinned));
+        setActiveWorktreeTabId(tabId);
+        rememberStatus(`已恢复提交 ${commit.shortHash} 的 ${file.path}`);
+        return;
+      }
     }
 
     const pendingTab: WorktreeEditorTab = {
@@ -1456,27 +1488,51 @@ export function App() {
     setWorktreeTabs((current) => upsertWorktreeTab(current, pendingTab, pinned));
     setActiveWorktreeTabId(tabId);
 
+    let loadPromise = !forceReload ? pendingCommitFileLoadsRef.current.get(cacheKey) : undefined;
+    if (!loadPromise) {
+      loadPromise = (async (): Promise<CommitFileCacheEntry> => {
+        const preview = await apiClient.getCommitFilePreview(project, commit.hash, file);
+        if (preview) {
+          return { file, diffLines: [], preview };
+        }
+
+        const diffLines = await apiClient.getCommitDiff(project, commit.hash, file.path);
+        return { file, diffLines, preview: null };
+      })();
+      if (!forceReload) {
+        pendingCommitFileLoadsRef.current.set(cacheKey, loadPromise);
+      }
+    }
+
     try {
-      const preview = await apiClient.getCommitFilePreview(selectedProject, commit.hash, file);
-      if (preview) {
-        setWorktreeTabs((current) =>
-          current.map((tab) => (tab.id === tabId ? { ...tab, file, diffLines: [], preview, loadError: undefined, loading: false, pinned: tab.pinned || pinned } : tab))
-        );
-        rememberStatus(`正在查看提交 ${commit.shortHash} 的媒体 ${file.path}`);
+      const loaded = await loadPromise;
+      setBoundedCache(commitFileCacheRef.current, cacheKey, loaded, COMMIT_FILE_CACHE_MAX_ENTRIES);
+      if (selectedProjectIdRef.current !== project.id) {
         return;
       }
-
-      const diffLines = await apiClient.getCommitDiff(selectedProject, commit.hash, file.path);
       setWorktreeTabs((current) =>
-        current.map((tab) => (tab.id === tabId ? { ...tab, file, diffLines, preview: null, loadError: undefined, loading: false, pinned: tab.pinned || pinned } : tab))
+        current.map((tab) =>
+          tab.id === tabId
+            ? { ...tab, file: loaded.file, diffLines: loaded.diffLines, preview: loaded.preview, loadError: undefined, loading: false, pinned: tab.pinned || pinned }
+            : tab
+        )
       );
-      rememberStatus(`正在查看提交 ${commit.shortHash} 的 ${file.path}`);
+      rememberStatus(loaded.preview
+        ? `正在查看提交 ${commit.shortHash} 的媒体 ${file.path}`
+        : `正在查看提交 ${commit.shortHash} 的 ${file.path}`);
     } catch (error) {
+      if (selectedProjectIdRef.current !== project.id) {
+        return;
+      }
       const message = errorText(error, "加载提交文件失败。");
       setWorktreeTabs((current) =>
         current.map((tab) => (tab.id === tabId ? { ...tab, loadError: message, loading: false } : tab))
       );
       notifyError(message);
+    } finally {
+      if (pendingCommitFileLoadsRef.current.get(cacheKey) === loadPromise) {
+        pendingCommitFileLoadsRef.current.delete(cacheKey);
+      }
     }
   }
 
@@ -3812,6 +3868,10 @@ function remoteProjectAddress(project: GitProject): string | undefined {
 
 function pullStrategyLabel(strategy: UiPreferences["pullStrategy"]): string {
   return strategy === "ff-only" ? "仅快进" : strategy === "rebase" ? "变基" : "变基并自动暂存";
+}
+
+function commitFileCacheKey(projectId: string, commitHash: string, filePath: string): string {
+  return `${projectId}\u0000${commitHash}\u0000${filePath.replace(/\\/g, "/")}`;
 }
 
 function upsertWorktreeTab(tabs: WorktreeEditorTab[], incomingTab: WorktreeEditorTab, forcePinned: boolean): WorktreeEditorTab[] {
