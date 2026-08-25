@@ -236,7 +236,7 @@ export function WorktreeDetailPanel({
       const cachedWidth = splitContentWidthCacheRef.current;
       const contentWidth = cachedWidth?.rows === splitDiffRows && cachedWidth.styleKey === styleKey
         ? cachedWidth.width
-        : measureSplitDiffContentWidth(splitDiffRows, codeStyle);
+        : estimateSplitDiffContentWidth(splitDiffRows, codeStyle);
       splitContentWidthCacheRef.current = { rows: splitDiffRows, styleKey, width: contentWidth };
 
       const visibleMaxScroll = codeWraps.reduce((maxScroll, wrap) => {
@@ -1058,48 +1058,59 @@ function buildInlineDiffSegments(value: string, counterpart: string): Array<{ te
   ].filter((segment) => segment.text.length > 0);
 }
 
-function measureSplitDiffContentWidth(rows: SplitDiffRow[], codeStyle: CSSStyleDeclaration): number {
+function estimateSplitDiffContentWidth(rows: SplitDiffRow[], codeStyle: CSSStyleDeclaration): number {
   const context = document.createElement("canvas").getContext("2d");
   if (!context) {
     return 0;
   }
 
   context.font = codeStyle.font;
+  const glyphWidth = context.measureText("0").width;
   const letterSpacing = Number.parseFloat(codeStyle.letterSpacing) || 0;
   const horizontalPadding = (Number.parseFloat(codeStyle.paddingLeft) || 0) + (Number.parseFloat(codeStyle.paddingRight) || 0);
   const tabSize = Math.max(1, Number.parseInt(codeStyle.tabSize, 10) || 8);
-  let maxTextWidth = 0;
+  let maxColumns = 0;
 
   for (const row of rows) {
     for (const line of [row.left, row.right]) {
       if (!line) {
         continue;
       }
-
-      const text = expandTabs(line.content || " ", tabSize);
-      const spacingWidth = Math.max(0, Array.from(text).length - 1) * letterSpacing;
-      maxTextWidth = Math.max(maxTextWidth, context.measureText(text).width + spacingWidth);
+      maxColumns = Math.max(maxColumns, codeTextColumns(line.content || " ", tabSize));
     }
   }
 
-  return maxTextWidth + horizontalPadding;
+  return maxColumns * glyphWidth + Math.max(0, maxColumns - 1) * letterSpacing + horizontalPadding;
 }
 
-function expandTabs(value: string, tabSize: number): string {
+function codeTextColumns(value: string, tabSize: number): number {
   let column = 0;
-  let result = "";
   for (const character of value) {
     if (character === "\t") {
-      const spaceCount = tabSize - (column % tabSize);
-      result += " ".repeat(spaceCount);
-      column += spaceCount;
+      column += tabSize - (column % tabSize);
       continue;
     }
 
-    result += character;
-    column += 1;
+    column += isWideCodePoint(character.codePointAt(0) ?? 0) ? 2 : 1;
   }
-  return result;
+  return column;
+}
+
+function isWideCodePoint(codePoint: number): boolean {
+  return codePoint >= 0x1100 && (
+    codePoint <= 0x115f
+    || codePoint === 0x2329
+    || codePoint === 0x232a
+    || (codePoint >= 0x2e80 && codePoint <= 0xa4cf && codePoint !== 0x303f)
+    || (codePoint >= 0xac00 && codePoint <= 0xd7a3)
+    || (codePoint >= 0xf900 && codePoint <= 0xfaff)
+    || (codePoint >= 0xfe10 && codePoint <= 0xfe19)
+    || (codePoint >= 0xfe30 && codePoint <= 0xfe6f)
+    || (codePoint >= 0xff00 && codePoint <= 0xff60)
+    || (codePoint >= 0xffe0 && codePoint <= 0xffe6)
+    || (codePoint >= 0x1f300 && codePoint <= 0x1faff)
+    || (codePoint >= 0x20000 && codePoint <= 0x3fffd)
+  );
 }
 
 function useSplitDiffLayout() {

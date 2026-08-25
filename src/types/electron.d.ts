@@ -171,6 +171,7 @@ export interface GitUIBridge {
   onTerminalData: (callback: (event: TerminalDataEvent) => void) => () => void;
   onTerminalExit: (callback: (event: TerminalExitEvent) => void) => () => void;
   cancelGitOperation: (operationId: string) => Promise<boolean>;
+  cancelGitReadRequest: (requestId: string) => Promise<boolean>;
   onGitOperationProgress: (callback: (event: GitLongOperationProgress) => void) => () => void;
   chooseDirectory: () => Promise<string | null>;
   chooseIdentityFile: () => Promise<string | null>;
@@ -202,7 +203,7 @@ export interface GitUIBridge {
   getBlame: (repository: RepositoryTarget, filePath: string, revision?: string) => Promise<GitBlameLine[]>;
   getHistoryRefs: (repository: RepositoryTarget) => Promise<GitHistoryRef[]>;
   getCommitDetails: (repository: RepositoryTarget, hash: string) => Promise<CommitNode>;
-  getCommitDiff: (repository: RepositoryTarget, hash: string, filePath?: string) => Promise<DiffLine[]>;
+  getCommitDiff: (repository: RepositoryTarget, hash: string, filePath?: string, knownFirstParent?: string | null, readRequestId?: string) => Promise<DiffLine[]>;
   getCommitFilePreview: (repository: RepositoryTarget, hash: string, file: ChangedFile) => Promise<FilePreview | null>;
   getWorktree: (repository: RepositoryTarget) => Promise<WorktreeState>;
   getWorktreeDiff: (repository: RepositoryTarget, filePath: string, staged: boolean) => Promise<DiffLine[]>;

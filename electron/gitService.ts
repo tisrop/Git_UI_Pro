@@ -384,6 +384,7 @@ interface GitRunOptions {
   timeoutMs?: number;
   stdin?: Buffer;
   operation?: GitLongOperationContext;
+  readRequestId?: string;
 }
 
 export interface GitBlameLine {
@@ -556,6 +557,10 @@ export class GitService {
     context: GitLongOperationContext;
     cancelled: boolean;
   }>();
+  private readonly activeReadRequests = new Map<string, {
+    child: ReturnType<typeof spawn>;
+    cancelled: boolean;
+  }>();
 
   cancelLongOperation(operationId: string): boolean {
     const active = this.activeLongOperations.get(operationId);
@@ -564,6 +569,16 @@ export class GitService {
     }
     active.cancelled = true;
     active.context.onProgress(operationProgress(active.context, "cancelling", "正在取消"));
+    active.child.kill();
+    return true;
+  }
+
+  cancelReadRequest(requestId: string): boolean {
+    const active = this.activeReadRequests.get(requestId);
+    if (!active) {
+      return false;
+    }
+    active.cancelled = true;
     active.child.kill();
     return true;
   }
@@ -592,6 +607,9 @@ export class GitService {
     if (options.operation && this.activeLongOperations.has(options.operation.id)) {
       throw new Error(`Git 后台任务编号重复：${options.operation.id}`);
     }
+    if (options.readRequestId && this.activeReadRequests.has(options.readRequestId)) {
+      throw new Error(`Git 读取任务编号重复：${options.readRequestId}`);
+    }
     return new Promise((resolve) => {
       const target = normalizeRepositoryTarget(cwd);
       const timeoutMs = options.timeoutMs ?? (target.remote && isReadOnlyGitCommand(args) ? remoteReadCommandTimeoutMs : undefined);
@@ -606,6 +624,9 @@ export class GitService {
         shell: false,
         windowsHide: true
       });
+      if (options.readRequestId) {
+        this.activeReadRequests.set(options.readRequestId, { child, cancelled: false });
+      }
 
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
@@ -618,6 +639,11 @@ export class GitService {
         if (timeoutId) {
           clearTimeout(timeoutId);
         }
+        const readRequest = options.readRequestId ? this.activeReadRequests.get(options.readRequestId) : undefined;
+        const readCancelled = readRequest?.child === child && readRequest.cancelled;
+        if (options.readRequestId && readRequest?.child === child) {
+          this.activeReadRequests.delete(options.readRequestId);
+        }
         if (options.operation) {
           const active = this.activeLongOperations.get(options.operation.id);
           const cancelled = active?.cancelled === true;
@@ -629,7 +655,9 @@ export class GitService {
             result.ok ? 100 : undefined
           ));
         }
-        resolve(result);
+        resolve(readCancelled
+          ? { ...result, ok: false, messageZh: "文件对比加载已取消。" }
+          : result);
       };
       const timeoutId = timeoutMs
         ? setTimeout(() => {
@@ -1054,23 +1082,32 @@ export class GitService {
     };
   }
 
-  async getCommitDiff(repositoryPath: RepositoryLocation, hash: string, filePath?: string): Promise<DiffLine[]> {
-    const commits = await this.getSingleCommit(repositoryPath, hash);
-    const commit = commits[0];
-    if (!commit) {
-      throw new Error("找不到指定提交。");
+  async getCommitDiff(
+    repositoryPath: RepositoryLocation,
+    hash: string,
+    filePath?: string,
+    knownFirstParent?: string | null,
+    readRequestId?: string
+  ): Promise<DiffLine[]> {
+    let firstParent = knownFirstParent;
+    if (firstParent === undefined) {
+      const commits = await this.getSingleCommit(repositoryPath, hash);
+      const commit = commits[0];
+      if (!commit) {
+        throw new Error("找不到指定提交。");
+      }
+      firstParent = commit.parents[0] ?? null;
     }
 
     const fullFileContext = filePath ? [FULL_FILE_DIFF_CONTEXT] : [];
-    const args =
-      commit.parents.length > 1
-        ? ["diff", "--patch", ...fullFileContext, "--find-renames", "--no-ext-diff", `${hash}^1`, hash]
-        : ["show", "--format=", "--patch", ...fullFileContext, "--find-renames", "--no-ext-diff", hash];
+    const args = firstParent
+      ? ["diff", "--patch", ...fullFileContext, "--find-renames", "--no-ext-diff", firstParent, hash]
+      : ["show", "--format=", "--patch", ...fullFileContext, "--find-renames", "--no-ext-diff", hash];
     if (filePath) {
       args.push("--", filePath);
     }
 
-    const result = await this.run(repositoryPath, args);
+    const result = await this.run(repositoryPath, args, { readRequestId });
     if (!result.ok) {
       throw new Error(result.messageZh ?? "无法读取提交 diff。");
     }

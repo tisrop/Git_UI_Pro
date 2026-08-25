@@ -1265,7 +1265,7 @@ function GraphCommitRow({
         style={rowStyle}
         aria-expanded={expanded}
         aria-haspopup="menu"
-        aria-keyshortcuts="Shift+F10"
+        aria-keyshortcuts="ArrowUp ArrowDown Home End Shift+F10"
         onClick={onSelect}
         onContextMenu={onContextMenu}
         onKeyDown={(event) => {
@@ -1273,7 +1273,10 @@ function GraphCommitRow({
             event.preventDefault();
             event.stopPropagation();
             onContextMenuKey(event);
+            return;
           }
+
+          navigateGraphButtons(event, ".graph-commit-list", ".graph-commit-row");
         }}
         onMouseEnter={(event) => onHoverStart(event.currentTarget)}
         onMouseLeave={onHoverEnd}
@@ -1566,40 +1569,22 @@ function GraphCommitFileRow({
   onSelect: () => void;
   onPin: () => void;
 }) {
-  const clickTimerRef = useRef<number | undefined>();
   const fullPath = absoluteFilePath(repositoryPath, file.path);
   const icon = fileIconInfo(file.path);
-
-  useEffect(
-    () => () => {
-      window.clearTimeout(clickTimerRef.current);
-    },
-    []
-  );
-
-  function scheduleSelect() {
-    window.clearTimeout(clickTimerRef.current);
-    clickTimerRef.current = window.setTimeout(() => {
-      onSelect();
-    }, 260);
-  }
-
-  function pinImmediately() {
-    window.clearTimeout(clickTimerRef.current);
-    onPin();
-  }
 
   return (
     <button
       type="button"
       className={`graph-commit-file-row ${selected ? "active" : ""}`}
       aria-current={selected ? "true" : undefined}
+      aria-keyshortcuts="ArrowUp ArrowDown Home End"
       style={graphFileIndentStyle(level)}
-      onClick={scheduleSelect}
+      onClick={onSelect}
       onDoubleClick={(event) => {
         event.preventDefault();
-        pinImmediately();
+        onPin();
       }}
+      onKeyDown={(event) => navigateGraphButtons(event, ".graph-commit-expansion", ".graph-commit-file-row")}
     >
       <span className={`scm-file-icon ${icon.className}`}>{icon.label}</span>
       <span className="graph-commit-file-main">
@@ -1611,6 +1596,58 @@ function GraphCommitFileRow({
       <span className={`graph-commit-file-status ${file.status}`}>{statusCode(file.status)}</span>
     </button>
   );
+}
+
+function navigateGraphButtons(
+  event: ReactKeyboardEvent<HTMLButtonElement>,
+  scopeSelector: string,
+  rowSelector: string
+) {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+    return;
+  }
+
+  const direction = event.key === "ArrowUp"
+    ? -1
+    : event.key === "ArrowDown"
+      ? 1
+      : event.key === "Home"
+        ? "first"
+        : event.key === "End"
+          ? "last"
+          : undefined;
+  if (direction === undefined) {
+    return;
+  }
+
+  const scope = event.currentTarget.closest(scopeSelector);
+  if (!scope) {
+    return;
+  }
+
+  const rows = Array.from(scope.querySelectorAll<HTMLButtonElement>(rowSelector))
+    .filter((row) => !row.disabled && row.getClientRects().length > 0);
+  const currentIndex = rows.indexOf(event.currentTarget);
+  if (currentIndex < 0 || rows.length === 0) {
+    return;
+  }
+
+  const nextIndex = direction === "first"
+    ? 0
+    : direction === "last"
+      ? rows.length - 1
+      : clampNumber(currentIndex + direction, 0, rows.length - 1);
+  const nextRow = rows[nextIndex];
+
+  event.preventDefault();
+  event.stopPropagation();
+  if (!nextRow || nextRow === event.currentTarget) {
+    return;
+  }
+
+  nextRow.focus({ preventScroll: true });
+  nextRow.scrollIntoView({ block: "nearest" });
+  nextRow.click();
 }
 
 function buildGraphFileTree(files: ChangedFile[]): GraphFileTreeEntry[] {

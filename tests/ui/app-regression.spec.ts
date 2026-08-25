@@ -899,6 +899,13 @@ test("长文件对比使用整文件宽度并保持虚拟滚动高度稳定", as
   await expect(modifiedFile).toBeVisible();
   await page.getByRole("button", { name: "隐藏控制台" }).click();
   await page.evaluate(() => {
+    const testWindow = window as typeof window & { __diffMeasureTextCalls?: number };
+    const originalMeasureText = CanvasRenderingContext2D.prototype.measureText;
+    testWindow.__diffMeasureTextCalls = 0;
+    CanvasRenderingContext2D.prototype.measureText = function measureDiffText(text) {
+      testWindow.__diffMeasureTextCalls = (testWindow.__diffMeasureTextCalls ?? 0) + 1;
+      return originalMeasureText.call(this, text);
+    };
     const diffLines = Array.from({ length: 650 }, (_, index) => ({
       type: index === 100 || index === 620 ? "add" as const : "context" as const,
       oldLineNumber: index === 100 || index === 620 ? undefined : index + 1,
@@ -929,6 +936,7 @@ test("长文件对比使用整文件宽度并保持虚拟滚动高度稳定", as
 
   expect(initialMetrics.renderedRows).toBeLessThan(650);
   expect(horizontalRange).toBeGreaterThan(1_000);
+  expect(await page.evaluate(() => (window as typeof window & { __diffMeasureTextCalls?: number }).__diffMeasureTextCalls ?? 0)).toBeLessThan(10);
 
   await minimap.focus();
   await minimap.press("End");
@@ -990,6 +998,115 @@ test("打开提交文件时使用圆形加载状态且不闪现空 diff 提示",
   await expect(page.locator(".editor-diff-panel .diff-line")).toHaveCount(2);
 });
 
+test("快速切换提交文件时立即响应最后一次选择且旧请求不会覆盖", async ({ page }) => {
+  await page.goto("/");
+  await page.locator(".graph-commit-row").first().click();
+
+  const prdFile = page.locator(".graph-commit-file-row").filter({ hasText: "PRD.md" });
+  const packageFile = page.locator(".graph-commit-file-row").filter({ hasText: "package.json" });
+  await expect(prdFile).toBeVisible();
+  await expect(packageFile).toBeVisible();
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __cancelledCommitReadRequests?: string[];
+      __slowCommitReadRequest?: string;
+      __rejectSlowCommitDiff?: (error: Error) => void;
+    };
+    testWindow.__cancelledCommitReadRequests = [];
+    window.gitUI = {
+      getCommitFilePreview: async () => null,
+      getCommitDiff: async (_repository, _hash, filePath, _knownFirstParent, readRequestId) => {
+        if (filePath === "docs/PRD.md") {
+          testWindow.__slowCommitReadRequest = readRequestId;
+          return new Promise((_resolve, reject) => {
+            testWindow.__rejectSlowCommitDiff = reject;
+          });
+        }
+        return [{ type: "context", oldLineNumber: 1, newLineNumber: 1, content: "最后选择的 package.json" }];
+      },
+      cancelGitReadRequest: async (requestId) => {
+        testWindow.__cancelledCommitReadRequests!.push(requestId);
+        if (requestId === testWindow.__slowCommitReadRequest) {
+          testWindow.__rejectSlowCommitDiff?.(new Error("文件对比加载已取消。"));
+        }
+        return true;
+      }
+    } as unknown as typeof window.gitUI;
+  });
+
+  await prdFile.click();
+  await expect(page.getByRole("status", { name: "正在加载文件对比：docs/PRD.md" })).toBeVisible();
+  await packageFile.click();
+
+  await expect(packageFile).toHaveAttribute("aria-current", "true");
+  await expect(packageFile).toBeFocused();
+  await expect(page.getByText("最后选择的 package.json", { exact: true })).toBeVisible();
+  await expect(page.getByRole("status", { name: "正在加载文件对比：docs/PRD.md" })).toBeHidden();
+  await expect.poll(() => page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __cancelledCommitReadRequests?: string[];
+      __slowCommitReadRequest?: string;
+    };
+    return testWindow.__cancelledCommitReadRequests?.includes(testWindow.__slowCommitReadRequest ?? "") ?? false;
+  })).toBe(true);
+  await expect(packageFile).toHaveAttribute("aria-current", "true");
+  await expect(page.getByText("最后选择的 package.json", { exact: true })).toBeVisible();
+  await expect(page.getByText("较慢的第一个文件", { exact: true })).toBeHidden();
+});
+
+test("提交文件行使用上下键切换文件而不滚动整张图表", async ({ page }) => {
+  await page.goto("/");
+  await page.locator(".graph-commit-row").first().click();
+  await page.evaluate(() => {
+    window.gitUI = {
+      getCommitFilePreview: async () => null,
+      getCommitDiff: async (_repository, _hash, filePath) => [
+        { type: "context", oldLineNumber: 1, newLineNumber: 1, content: `键盘打开 ${filePath}` }
+      ]
+    } as unknown as typeof window.gitUI;
+  });
+
+  const graphList = page.locator(".graph-commit-list");
+  const prdFile = page.locator(".graph-commit-file-row").filter({ hasText: "PRD.md" });
+  const packageFile = page.locator(".graph-commit-file-row").filter({ hasText: "package.json" });
+  await prdFile.click();
+  const initialScrollTop = await graphList.evaluate((element) => element.scrollTop);
+
+  await prdFile.press("ArrowDown");
+  await expect(packageFile).toBeFocused();
+  await expect(packageFile).toHaveAttribute("aria-current", "true");
+  await expect(page.getByText("键盘打开 package.json", { exact: true })).toBeVisible();
+  expect(await graphList.evaluate((element) => element.scrollTop)).toBe(initialScrollTop);
+
+  await packageFile.press("ArrowUp");
+  await expect(prdFile).toBeFocused();
+  await expect(prdFile).toHaveAttribute("aria-current", "true");
+  await expect(page.getByText("键盘打开 docs/PRD.md", { exact: true })).toBeVisible();
+  expect(await graphList.evaluate((element) => element.scrollTop)).toBe(initialScrollTop);
+});
+
+test("提交父行使用上下键只在提交之间切换", async ({ page }) => {
+  await page.goto("/");
+  const graphList = page.locator(".graph-commit-list");
+  const commitRows = page.locator(".graph-commit-row");
+  const firstCommit = commitRows.nth(0);
+  const secondCommit = commitRows.nth(1);
+  await firstCommit.click();
+  const initialScrollTop = await graphList.evaluate((element) => element.scrollTop);
+
+  await firstCommit.press("ArrowDown");
+  await expect(secondCommit).toBeFocused();
+  await expect(secondCommit).toHaveClass(/active/);
+  await expect(secondCommit).toHaveAttribute("aria-expanded", "true");
+  expect(await graphList.evaluate((element) => element.scrollTop)).toBe(initialScrollTop);
+
+  await secondCommit.press("ArrowUp");
+  await expect(firstCommit).toBeFocused();
+  await expect(firstCommit).toHaveClass(/active/);
+  await expect(firstCommit).toHaveAttribute("aria-expanded", "true");
+  expect(await graphList.evaluate((element) => element.scrollTop)).toBe(initialScrollTop);
+});
+
 test("切换回已查看的提交文件时复用缓存", async ({ page }) => {
   await page.goto("/");
   await page.locator(".graph-commit-row").first().click();
@@ -1002,16 +1119,19 @@ test("切换回已查看的提交文件时复用缓存", async ({ page }) => {
     const testWindow = window as typeof window & {
       __commitPreviewCalls?: string[];
       __commitDiffCalls?: string[];
+      __commitDiffParents?: Array<string | null | undefined>;
     };
     testWindow.__commitPreviewCalls = [];
     testWindow.__commitDiffCalls = [];
+    testWindow.__commitDiffParents = [];
     window.gitUI = {
       getCommitFilePreview: async (_repository, _hash, file) => {
         testWindow.__commitPreviewCalls!.push(file.path);
         return null;
       },
-      getCommitDiff: async (_repository, _hash, filePath) => {
+      getCommitDiff: async (_repository, _hash, filePath, knownFirstParent) => {
         testWindow.__commitDiffCalls!.push(filePath ?? "");
+        testWindow.__commitDiffParents!.push(knownFirstParent);
         return [{ type: "context", oldLineNumber: 1, newLineNumber: 1, content: `缓存 ${filePath}` }];
       }
     } as unknown as typeof window.gitUI;
@@ -1029,14 +1149,17 @@ test("切换回已查看的提交文件时复用缓存", async ({ page }) => {
     const testWindow = window as typeof window & {
       __commitPreviewCalls?: string[];
       __commitDiffCalls?: string[];
+      __commitDiffParents?: Array<string | null | undefined>;
     };
     return {
       previews: testWindow.__commitPreviewCalls,
-      diffs: testWindow.__commitDiffCalls
+      diffs: testWindow.__commitDiffCalls,
+      parents: testWindow.__commitDiffParents
     };
   });
   expect(calls.previews).toEqual(["docs/PRD.md", "package.json"]);
   expect(calls.diffs).toEqual(["docs/PRD.md", "package.json"]);
+  expect(calls.parents).toEqual(["b13c48e", "b13c48e"]);
 });
 
 test("提交变更文件默认使用可折叠树形视图", async ({ page }) => {

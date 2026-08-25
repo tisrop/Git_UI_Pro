@@ -56,6 +56,7 @@ contextBridge.exposeInMainWorld("gitUI", {
     return () => ipcRenderer.removeListener("terminal:exit", listener);
   },
   cancelGitOperation: (operationId: string) => ipcRenderer.invoke("git:cancelOperation", operationId),
+  cancelGitReadRequest: (requestId: string) => ipcRenderer.invoke("git:cancelReadRequest", requestId),
   onGitOperationProgress: (callback: (event: GitLongOperationProgress) => void) => {
     const listener = (_event: IpcRendererEvent, payload: GitLongOperationProgress) => callback(payload);
     ipcRenderer.on("git:operationProgress", listener);
@@ -96,7 +97,8 @@ contextBridge.exposeInMainWorld("gitUI", {
   getBlame: (repositoryPath: RepositoryTarget, filePath: string, revision?: string) => ipcRenderer.invoke("git:getBlame", repositoryPath, filePath, revision),
   getHistoryRefs: (repositoryPath: RepositoryTarget) => ipcRenderer.invoke("git:getHistoryRefs", repositoryPath),
   getCommitDetails: (repositoryPath: RepositoryTarget, hash: string) => ipcRenderer.invoke("git:getCommitDetails", repositoryPath, hash),
-  getCommitDiff: (repositoryPath: RepositoryTarget, hash: string, filePath?: string) => ipcRenderer.invoke("git:getCommitDiff", repositoryPath, hash, filePath),
+  getCommitDiff: (repositoryPath: RepositoryTarget, hash: string, filePath?: string, knownFirstParent?: string | null, readRequestId?: string) =>
+    ipcRenderer.invoke("git:getCommitDiff", repositoryPath, hash, filePath, knownFirstParent, readRequestId),
   getCommitFilePreview: (repositoryPath: RepositoryTarget, hash: string, file: { path: string; oldPath?: string; status: string; staged: boolean }) =>
     ipcRenderer.invoke("git:getCommitFilePreview", repositoryPath, hash, file),
   getWorktree: (repositoryPath: RepositoryTarget) => ipcRenderer.invoke("git:getWorktree", repositoryPath),

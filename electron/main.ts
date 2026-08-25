@@ -129,6 +129,7 @@ function registerIpc(): void {
   ipcMain.handle("terminal:appendHistory", (_event, projectId: string, command: string) => configStore.appendTerminalHistory(projectId, command));
   ipcMain.handle("terminal:clearHistory", (_event, projectId: string) => configStore.clearTerminalHistory(projectId));
   ipcMain.handle("git:cancelOperation", (_event, operationId: string) => gitService.cancelLongOperation(requireOperationId(operationId)));
+  ipcMain.handle("git:cancelReadRequest", (_event, requestId: string) => gitService.cancelReadRequest(requireOperationId(requestId)));
 
   ipcMain.handle("git:getVersion", () => gitService.getVersion());
 
@@ -290,7 +291,11 @@ function registerIpc(): void {
   );
   ipcMain.handle("git:getHistoryRefs", (_event, repositoryPath: RepositoryLocation) => gitService.getHistoryRefs(repositoryPath));
   ipcMain.handle("git:getCommitDetails", (_event, repositoryPath: RepositoryLocation, hash: string) => gitService.getCommitDetails(repositoryPath, hash));
-  ipcMain.handle("git:getCommitDiff", (_event, repositoryPath: RepositoryLocation, hash: string, filePath?: string) => gitService.getCommitDiff(repositoryPath, hash, filePath));
+  ipcMain.handle(
+    "git:getCommitDiff",
+    (_event, repositoryPath: RepositoryLocation, hash: string, filePath?: string, knownFirstParent?: string | null, readRequestId?: string) =>
+      gitService.getCommitDiff(repositoryPath, hash, filePath, knownFirstParent, readRequestId)
+  );
   ipcMain.handle("git:getCommitFilePreview", (_event, repositoryPath: RepositoryLocation, hash: string, file) => gitService.getCommitFilePreview(repositoryPath, hash, file));
   ipcMain.handle("git:getWorktree", (_event, repositoryPath: RepositoryLocation) => gitService.getWorktree(repositoryPath));
   ipcMain.handle("git:getWorktreeDiff", (_event, repositoryPath: RepositoryLocation, filePath: string, staged: boolean) =>

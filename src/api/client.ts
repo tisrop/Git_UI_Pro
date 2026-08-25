@@ -427,13 +427,26 @@ export const apiClient = {
     return mockCommits.find((commit) => commit.hash === hash) ?? mockCommits[0];
   },
 
-  async getCommitDiff(project: GitProject, hash: string, filePath?: string): Promise<DiffLine[]> {
+  async getCommitDiff(
+    project: GitProject,
+    hash: string,
+    filePath?: string,
+    knownFirstParent?: string | null,
+    readRequestId?: string
+  ): Promise<DiffLine[]> {
     if (window.gitUI) {
-      return window.gitUI.getCommitDiff(repositoryTarget(project), hash, filePath);
+      return window.gitUI.getCommitDiff(repositoryTarget(project), hash, filePath, knownFirstParent, readRequestId);
     }
 
     await wait(mockDelay);
     return mockDiffLines;
+  },
+
+  async cancelGitReadRequest(requestId: string): Promise<boolean> {
+    if (window.gitUI?.cancelGitReadRequest) {
+      return window.gitUI.cancelGitReadRequest(requestId);
+    }
+    return false;
   },
 
   async getCommitFilePreview(project: GitProject, hash: string, file: ChangedFile): Promise<FilePreview | null> {

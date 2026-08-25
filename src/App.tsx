@@ -212,6 +212,7 @@ export function App() {
   const graphHistoryCacheRef = useRef(new Map<string, GraphHistorySnapshot>());
   const commitFileCacheRef = useRef(new Map<string, CommitFileCacheEntry>());
   const pendingCommitFileLoadsRef = useRef(new Map<string, Promise<CommitFileCacheEntry>>());
+  const activeCommitFileReadRef = useRef<{ cacheKey: string; requestId: string; cancelled: boolean }>();
   const pendingConfirmResolveRef = useRef<((confirmed: boolean) => void) | undefined>();
   const detailStackRef = useRef<HTMLElement | null>(null);
   const restoreConsoleHeightRef = useRef(DEFAULT_CONSOLE_HEIGHT);
@@ -1439,16 +1440,21 @@ export function App() {
 
     const project = selectedProject;
     const tabId = commitFileTabId(commit.hash, file.path);
+    const cacheKey = commitFileCacheKey(project.id, commit.hash, file.path);
+    cancelActiveCommitFileRead(cacheKey);
+
     const existingTab = worktreeTabs.find((tab) => tab.id === tabId);
     if (existingTab && !existingTab.loadError && !forceReload) {
       if (pinned && !existingTab.pinned) {
         setWorktreeTabs((current) => current.map((tab) => (tab.id === tabId ? { ...tab, pinned: true } : tab)));
       }
+      if (pinned && activeCommitFileReadRef.current?.cacheKey === cacheKey) {
+        activeCommitFileReadRef.current = undefined;
+      }
       setActiveWorktreeTabId(tabId);
       return;
     }
 
-    const cacheKey = commitFileCacheKey(project.id, commit.hash, file.path);
     if (!forceReload) {
       const cached = commitFileCacheRef.current.get(cacheKey);
       if (cached) {
@@ -1490,17 +1496,24 @@ export function App() {
 
     let loadPromise = !forceReload ? pendingCommitFileLoadsRef.current.get(cacheKey) : undefined;
     if (!loadPromise) {
+      const readRequest = { cacheKey, requestId: `filediff-${crypto.randomUUID()}`, cancelled: false };
       loadPromise = (async (): Promise<CommitFileCacheEntry> => {
         const preview = await apiClient.getCommitFilePreview(project, commit.hash, file);
+        if (readRequest.cancelled) {
+          throw new Error("文件对比加载已取消。");
+        }
         if (preview) {
           return { file, diffLines: [], preview };
         }
 
-        const diffLines = await apiClient.getCommitDiff(project, commit.hash, file.path);
+        const diffLines = await apiClient.getCommitDiff(project, commit.hash, file.path, commit.parents[0] ?? null, readRequest.requestId);
         return { file, diffLines, preview: null };
       })();
       if (!forceReload) {
         pendingCommitFileLoadsRef.current.set(cacheKey, loadPromise);
+      }
+      if (!pinned) {
+        activeCommitFileReadRef.current = readRequest;
       }
     }
 
@@ -1525,6 +1538,9 @@ export function App() {
         return;
       }
       const message = errorText(error, "加载提交文件失败。");
+      if (message.includes("文件对比加载已取消")) {
+        return;
+      }
       setWorktreeTabs((current) =>
         current.map((tab) => (tab.id === tabId ? { ...tab, loadError: message, loading: false } : tab))
       );
@@ -1532,6 +1548,9 @@ export function App() {
     } finally {
       if (pendingCommitFileLoadsRef.current.get(cacheKey) === loadPromise) {
         pendingCommitFileLoadsRef.current.delete(cacheKey);
+      }
+      if (activeCommitFileReadRef.current?.cacheKey === cacheKey) {
+        activeCommitFileReadRef.current = undefined;
       }
     }
   }
@@ -1560,8 +1579,21 @@ export function App() {
   }
 
   function clearWorktreeEditorTabs() {
+    cancelActiveCommitFileRead();
     setWorktreeTabs([]);
     setActiveWorktreeTabId(null);
+  }
+
+  function cancelActiveCommitFileRead(exceptCacheKey?: string) {
+    const activeRead = activeCommitFileReadRef.current;
+    if (!activeRead || activeRead.cacheKey === exceptCacheKey) {
+      return;
+    }
+
+    activeRead.cancelled = true;
+    activeCommitFileReadRef.current = undefined;
+    pendingCommitFileLoadsRef.current.delete(activeRead.cacheKey);
+    void apiClient.cancelGitReadRequest(activeRead.requestId);
   }
 
   async function handleAddProject() {
