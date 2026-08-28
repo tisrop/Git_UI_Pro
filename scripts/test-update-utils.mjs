@@ -268,7 +268,7 @@ test("统一字符串与多版本发布说明格式", () => {
   );
 });
 
-test("安装版下载完成后支持退出静默安装与立即静默重启", () => {
+test("安装版下载完成后仅在用户确认时打开安装程序", () => {
   const preferences = {
     autoDownload: true,
     autoInstallOnAppQuit: false,
@@ -281,7 +281,7 @@ test("安装版下载完成后支持退出静默安装与立即静默重启", ()
   configureUpgradeUpdater(preferences);
   assert.deepEqual(preferences, {
     autoDownload: false,
-    autoInstallOnAppQuit: true,
+    autoInstallOnAppQuit: false,
     allowPrerelease: false,
     allowDowngrade: false,
     fullChangelog: false,
@@ -293,7 +293,7 @@ test("安装版下载完成后支持退出静默安装与立即静默重启", ()
   restartAndInstallNsisUpdate({
     quitAndInstall: (...args) => installCalls.push(args)
   });
-  assert.deepEqual(installCalls, [[true, true]]);
+  assert.deepEqual(installCalls, [[false, true]]);
 });
 
 test("更新详情选择目标版本的上一正式版", () => {

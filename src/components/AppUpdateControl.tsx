@@ -856,9 +856,9 @@ function phaseLabel(state: UpdateState): string {
     case "downloading":
       return rollback ? "正在下载回退版本" : "正在下载更新";
     case "downloaded":
-      return rollback ? "回退版本已就绪" : "重启后自动完成更新";
+      return rollback ? "回退安装包已就绪" : "更新安装包已就绪";
     case "installing":
-      return rollback ? "正在静默回退并重启" : "正在静默更新并重启";
+      return rollback ? "正在启动回退安装程序" : "正在启动更新安装程序";
     case "error":
       return rollback ? "回退未完成" : "更新未完成";
     default:
@@ -874,10 +874,10 @@ function primaryActionLabel(state: UpdateState, actionPending: boolean): string 
     return "正在下载";
   }
   if (state.phase === "downloaded") {
-    return actionPending ? "正在启动" : state.operation === "rollback" ? "重启并完成回退" : "重启并完成更新";
+    return actionPending ? "正在启动" : state.operation === "rollback" ? "打开回退安装程序" : "打开更新安装程序";
   }
   if (state.phase === "installing") {
-    return "正在应用更新";
+    return "正在启动安装程序";
   }
   if (state.phase === "error") {
     return actionPending ? "正在重试" : state.operation === "rollback" ? "重新下载回退包" : "重新下载";

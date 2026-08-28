@@ -210,7 +210,7 @@ export async function startFreshUpgradeDownload(
 
 export function configureUpgradeUpdater(updater: UpgradeUpdaterPreferences): void {
   updater.autoDownload = false;
-  updater.autoInstallOnAppQuit = true;
+  updater.autoInstallOnAppQuit = false;
   updater.allowPrerelease = false;
   updater.allowDowngrade = false;
   updater.fullChangelog = false;
@@ -219,7 +219,7 @@ export function configureUpgradeUpdater(updater: UpgradeUpdaterPreferences): voi
 }
 
 export function restartAndInstallNsisUpdate(updater: InstallableNsisUpdater): void {
-  updater.quitAndInstall(true, true);
+  updater.quitAndInstall(false, true);
 }
 
 export function parseLatestStableGithubRelease(value: unknown): LatestStableRelease {
