@@ -2,6 +2,9 @@
   "name": "git-ui-pro",
   "version": "0.1.48",
   "private": true,
+  "featureFlags": {
+    "macosInAppUpdates": false
+  },
   "description": "中文桌面 Git 可视化管理软件",
   "author": {
     "name": "Git UI Pro",
@@ -37,6 +40,7 @@
     "test:terminal": "npm run build:electron && node --test scripts/test-terminal-history.mjs",
     "test:release": "node --test scripts/test-release-console.mjs",
     "test:update": "npm run build:electron && node --test scripts/test-update-utils.mjs",
+    "test:mac-update-metadata": "node --test scripts/test-mac-update-metadata.mjs",
     "test:capabilities": "npm run build:electron && node --test scripts/test-repository-capabilities.mjs",
     "test:ui": "playwright test",
     "test": "npm run build:electron && node --test scripts/test-config-store.mjs scripts/test-terminal-history.mjs scripts/test-update-utils.mjs scripts/test-repository-capabilities.mjs scripts/test-hosting-service.mjs && node scripts/test-merge-service.mjs && node --test scripts/test-release-console.mjs",
@@ -78,6 +82,7 @@
     "cross-env": "^7.0.3",
     "electron": "29.4.6",
     "electron-builder": "^26.15.3",
+    "js-yaml": "^4.1.0",
     "typescript": "^5.6.3",
     "undici": "^7.29.0",
     "vite": "^5.4.11",
@@ -162,22 +167,14 @@
     },
     "mac": {
       "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "x64"
-          ]
-        }
+        "dmg",
+        "zip"
       ],
       "icon": "build/icon.icns",
       "category": "public.app-category.developer-tools",
       "identity": null,
+      "hardenedRuntime": false,
+      "notarize": false,
       "artifactName": "Git-UI-Pro-${version}-${os}-${arch}.${ext}"
     },
     "linux": {
